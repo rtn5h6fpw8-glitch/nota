@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '20 · 22.10.2026';
+const APP_VERSION = '21 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -790,6 +790,102 @@ audio.addEventListener('error', () => {
   P.skipAfterError();
 });
 
+/* ---------- lyrics: time-synced lines from the open LRCLIB database ---------- */
+function parseLrc(text) {
+  const out = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const stamps = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    if (!stamps.length) continue;
+    const words = line.replace(/\[[^\]]*\]/g, '').trim();
+    for (const m of stamps) out.push({ t: +m[1] * 60 + +m[2], text: words });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+function fetchLyrics(t) {
+  return cached('lyr:' + t.id, async () => {
+    const title = String(t.title).replace(/\s*[([](feat|ft|with|prod)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').replace(/^.*?\s[-–]\s(?=.)/, (m) => (t.artist && m.toLowerCase().includes(String(t.artist).toLowerCase()) ? '' : m)).trim();
+    const artist = String(t.artist || '').split(/,|\s(?:feat\.?|ft\.?|&|x)\s/i)[0].trim();
+    let d = null;
+    if (artist) d = await getJSONOnce('https://lrclib.net/api/get?' + new URLSearchParams({ artist_name: artist, track_name: title }), 10000).catch(() => null);
+    if (!d || (!d.syncedLyrics && !d.plainLyrics)) {
+      const q = new URLSearchParams(artist ? { track_name: title, artist_name: artist } : { q: title });
+      const l = await getJSONOnce('https://lrclib.net/api/search?' + q, 10000).catch(() => []);
+      d = (l || []).find((x) => x.syncedLyrics) || (l || []).find((x) => x.plainLyrics) || null;
+    }
+    if (!d) return { none: true };
+    return { synced: d.syncedLyrics ? parseLrc(d.syncedLyrics) : null, plain: d.plainLyrics || '' };
+  }, 30 * 24 * 3600e3);
+}
+const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '' };
+function loadLyrics(t) {
+  lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : '';
+  showMiniLyric('');
+  if (!t || t.live) { if (lyr.open) drawLyrics(); return; }
+  if (lyr.open) drawLyrics();
+  whenReady(fetchLyrics(t), (d) => {
+    if (!P.cur || P.cur.id !== lyr.forId) return;
+    lyr.data = d;
+    lyr.lines = d.synced && d.synced.length && !t.preview ? d.synced : null;
+    if (lyr.open) drawLyrics();
+    syncLyrics(true);
+  }, () => { if (lyr.open) drawLyrics(); });
+}
+function drawLyrics() {
+  const box = $('#lyrics'), inner = $('#lyrInner'), t = P.cur, d = lyr.data;
+  inner.style.transition = 'none'; inner.style.transform = '';
+  requestAnimationFrame(() => { inner.style.transition = ''; });
+  box.classList.remove('plain');
+  if (!t) return;
+  if (t.live) { inner.innerHTML = '<p class="lyr-state">У радиоэфира нет текста песни</p>'; return; }
+  if (!d) { inner.innerHTML = '<p class="lyr-state">Ищу текст…</p>'; return; }
+  if (d.none || (!d.synced && !d.plain)) { inner.innerHTML = '<p class="lyr-state">Текст этой песни не найден</p>'; return; }
+  if (lyr.lines) {
+    inner.innerHTML = lyr.lines.map((l) => `<button class="lyr-line${l.text ? '' : ' gap'}" data-lt="${l.t}">${l.text ? esc(l.text) : '•  •  •'}</button>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
+  } else {
+    box.classList.add('plain');
+    const text = d.plain || (d.synced || []).map((l) => l.text).join('\n');
+    inner.innerHTML = text.split('\n').map((x) => `<p class="lyr-line">${esc(x) || '&nbsp;'}</p>`).join('') + `<span class="lyr-src">Текст: LRCLIB${t.preview ? ' · у превью без синхронизации' : ''}</span>`;
+  }
+  lyr.idx = -2;
+  syncLyrics(true);
+}
+function showMiniLyric(text) {
+  const ml = $('#miniLyric'), ma = $('#miniArtist');
+  if (!text) { if (!ml.hidden) { ml.hidden = true; ma.hidden = false; } return; }
+  ml.hidden = false; ma.hidden = true;
+  ml.textContent = text;
+  ml.style.animation = 'none'; void ml.offsetWidth; ml.style.animation = '';
+}
+function syncLyrics(force) {
+  const lines = lyr.lines;
+  if (!lines || !P.cur) return;
+  const c = (pendingSeek != null ? pendingSeek : audio.currentTime - segStart()) + 0.3;
+  let i = -1;
+  for (let k = 0; k < lines.length && lines[k].t <= c; k++) i = k;
+  if (i === lyr.idx && !force) return;
+  lyr.idx = i;
+  showMiniLyric(i >= 0 ? lines[i].text : '');
+  if (!lyr.open) return;
+  const els = $('#lyrInner').querySelectorAll('.lyr-line');
+  els.forEach((el, k) => { el.classList.toggle('on', k === i); el.classList.toggle('near', Math.abs(k - i) === 1); });
+  const el = els[Math.max(0, i)];
+  if (el) $('#lyrInner').style.transform = `translate3d(0,${Math.min(0, $('#lyrics').clientHeight * 0.3 - el.offsetTop)}px,0)`;
+}
+function setLyricsOpen(on) {
+  lyr.open = on; store.set('lyricsOpen', on);
+  $('#player').classList.toggle('lyrics-on', on);
+  $('#lyrics').hidden = !on;
+  $('#lyricsBtn').classList.toggle('on', on);
+  if (on) drawLyrics();
+}
+$('#lyricsBtn').onclick = () => setLyricsOpen(!lyr.open);
+$('#lyrInner').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-lt]');
+  if (!b) return;
+  seekTo(+b.dataset.lt);
+  if (audio.paused) audio.play().catch(() => {});
+});
+
 /* ---------- lock screen / headphones ---------- */
 function setSession(t) {
   if (!('mediaSession' in navigator) || !t) return;
@@ -812,10 +908,18 @@ if ('mediaSession' in navigator) {
 }
 
 /* ---------- player UI ---------- */
+let shownId = '';
 function renderNow() {
   const t = P.cur;
-  $('#mini').hidden = !t;
+  const mini = $('#mini');
+  if (t && mini.hidden) { mini.classList.remove('show'); void mini.offsetWidth; mini.classList.add('show'); }
+  mini.hidden = !t;
   if (!t) return;
+  if (t.id !== shownId) {
+    shownId = t.id;
+    for (const el of [$('#bigArt'), $('.mini-text'), $('.now-text')]) { el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap'); }
+    loadLyrics(t);
+  }
   const art = (t.coverKey && files.covers.get(t.coverKey)) || t.art || 'icon-512.png';
   const big = t.artBig || art;
   $('#miniTitle').textContent = t.title;
@@ -845,7 +949,13 @@ function renderNow() {
 }
 function renderPlayState() {
   const on = P.playing;
-  for (const b of [$('#play'), $('#miniPlay')]) { b.innerHTML = on ? I.pause : I.play; b.setAttribute('aria-label', on ? 'Пауза' : 'Играть'); }
+  for (const b of [$('#play'), $('#miniPlay')]) {
+    if (b.dataset.on === String(on)) continue;
+    b.dataset.on = String(on);
+    b.innerHTML = on ? I.pause : I.play;
+    b.firstChild.classList.add('flip');
+    b.setAttribute('aria-label', on ? 'Пауза' : 'Играть');
+  }
   $('#stage').classList.toggle('paused', !on);
   document.body.classList.toggle('is-paused', !on);
   try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = on ? 'playing' : 'paused'; } catch {}
@@ -883,6 +993,7 @@ function renderTime() {
   const c = pendingSeek != null ? pendingSeek : Math.max(0, (audio.currentTime || 0) - segStart());
   const r = d ? Math.min(1, c / d) : 0;
   miniBar.style.transform = `scaleX(${r})`;
+  syncLyrics(false);
   if (seekRatio != null) return;
   setSeek(r);
   const sec = Math.floor(c), left = Math.floor(Math.max(0, d - c));
@@ -970,7 +1081,13 @@ seekEl.addEventListener('keydown', (e) => {
 const vol = $('#volume');
 vol.value = Math.round(audio.volume * 100); vol.style.setProperty('--p', vol.value + '%');
 vol.addEventListener('input', () => { audio.volume = vol.value / 100; vol.style.setProperty('--p', vol.value + '%'); store.set('volume', audio.volume); });
-$('#bigLike').onclick = () => { const t = P.cur; if (t) (t.src === 'radio' ? lib.toggleStation(t) : lib.toggleLike(t)); };
+$('#bigLike').onclick = (e) => {
+  const t = P.cur, b = e.currentTarget;
+  if (!t) return;
+  t.src === 'radio' ? lib.toggleStation(t) : lib.toggleLike(t);
+  b.classList.remove('burst');
+  if (b.classList.contains('on')) { void b.offsetWidth; b.classList.add('burst'); }
+};
 $('#bigMore').onclick = () => P.cur && trackSheet(P.cur, {});
 $('#bigArtist').onclick = () => {
   const t = P.cur;
@@ -1725,6 +1842,34 @@ function prefetch(h) {
 }
 document.addEventListener('pointerdown', (e) => { const a = e.target.closest('a[href^="#"]'); if (a) prefetch(a.getAttribute('href')); }, { passive: true });
 
+/* cards and tiles float in as they come into view */
+const revealObs = 'IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches
+  ? new IntersectionObserver((list) => list.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in-view'); revealObs.unobserve(e.target); } }), { rootMargin: '0px 40px -20px 40px' })
+  : null;
+function revealIn() {
+  if (!revealObs) return;
+  view.querySelectorAll('.card:not(.reveal), .tile:not(.reveal), .feature:not(.reveal), .top-hit:not(.reveal)').forEach((el) => {
+    const i = [...el.parentNode.children].indexOf(el);
+    el.style.setProperty('--d', `${Math.min(i, 8) * 45}ms`);
+    el.classList.add('reveal');
+    revealObs.observe(el);
+  });
+}
+let revealTimer;
+new MutationObserver(() => { clearTimeout(revealTimer); revealTimer = setTimeout(revealIn, 16); }).observe(view, { childList: true, subtree: true });
+/* artist header: the photo drifts slower than the page and stretches when pulled down */
+let parallaxRaf = 0;
+window.addEventListener('scroll', () => {
+  if (parallaxRaf) return;
+  parallaxRaf = requestAnimationFrame(() => {
+    parallaxRaf = 0;
+    const c = view.querySelector('.artist-head .cover');
+    if (!c) return;
+    const y = window.scrollY;
+    c.style.transform = y >= 0 ? `translate3d(0,${y * 0.4}px,0)` : `scale(${1 + -y / 300})`;
+  });
+}, { passive: true });
+
 /* compact title bar: appears once the big page title scrolls away */
 let titleObs = null;
 function watchTitle() {
@@ -1795,6 +1940,7 @@ async function seedCache() {
 }
 await seedCache();
 route();
+setLyricsOpen(lyr.open);
 if (P.cur) renderNow(); else renderPlayState();
 setTimeout(() => (window.requestIdleCallback || setTimeout)(() => rapIndex().catch(() => {})), 4000);
 files.loadCovers().then(() => { if (P.cur && P.cur.src === 'local') renderNow(); });

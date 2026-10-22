@@ -40,7 +40,7 @@
 <div class="mini" id="mini" hidden>
   <button class="mini-open" id="miniOpen" aria-label="Открыть плеер">
     <span class="mini-art"><img id="miniArt" alt="" onload="this.classList.add('in')"></span>
-    <span class="mini-text"><b id="miniTitle"></b><small id="miniArtist"></small></span>
+    <span class="mini-text"><b id="miniTitle"></b><small id="miniArtist"></small><small id="miniLyric" class="mini-lyric" hidden></small></span>
   </button>
   <button class="ctl" id="miniPlay" aria-label="Играть"></button>
   <button class="ctl" id="miniNext" aria-label="Следующий"><svg viewBox="0 0 24 24"><path d="M3.5 5.6v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L5 4.9c-.6-.5-1.5-.1-1.5.7zm9 0v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L14 4.9c-.6-.5-1.5-.1-1.5.7z"/></svg></button>
@@ -52,9 +52,11 @@
   <div class="player-inner">
     <button class="grabber" id="playerClose" aria-label="Свернуть плеер"><span></span></button>
     <div class="stage" id="stage"><img id="bigArt" alt="" onload="this.classList.add('in')"></div>
+    <div class="lyrics" id="lyrics" hidden><div class="lyr-inner" id="lyrInner"></div></div>
     <div class="now">
       <div class="now-text"><h2 id="bigTitle"></h2><button id="bigArtist" class="now-artist"></button></div>
       <button class="now-btn" id="bigLike" aria-label="В избранное"></button>
+      <button class="now-btn" id="lyricsBtn" aria-label="Текст песни"><svg viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7.5L7 21v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm2.5 4.5v2h3.6c-.2 1.3-.9 2.1-2.1 2.6l.6 1.6c2.2-.8 3.4-2.6 3.4-5.2v-1zm6 0v2h3.6c-.2 1.3-.9 2.1-2.1 2.6l.6 1.6c2.2-.8 3.4-2.6 3.4-5.2v-1z"/></svg></button>
       <button class="now-btn" id="bigMore" aria-label="Ещё"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>
     </div>
     <div class="seek" id="seekWrap">
