@@ -66,7 +66,7 @@ main {
 .back svg { width: 24px; height: 24px; }
 
 /* sections */
-.section { margin-top: 30px; content-visibility: auto; contain-intrinsic-size: auto 320px; }
+.section { margin-top: 30px; }
 .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .sec-head h2 { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 700; letter-spacing: -.018em; }
 .sec-head a, .sec-head button.more { display: inline-flex; align-items: center; color: var(--fg-2); font-size: 15px; gap: 1px; }
@@ -222,8 +222,6 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 
 /* states */
 .sk { background: var(--surface); border-radius: var(--r-art); position: relative; overflow: hidden; }
-.sk::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg) 45%, transparent), transparent); animation: shimmer 1.4s infinite; }
-@keyframes shimmer { to { transform: translateX(100%); } }
 .sk-line { height: 11px; border-radius: 4px; margin-top: 9px; width: 80%; }
 .sk-line.short { width: 50%; margin-top: 6px; }
 .empty { text-align: center; color: var(--fg-2); padding: 48px 16px; font-size: 15px; }
@@ -276,8 +274,7 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 .player { will-change: transform; backface-visibility: hidden; position: fixed; inset: 0; z-index: 40; overflow-y: auto; overscroll-behavior: contain; color: #fff; background: #1a1a1c; animation: rise .38s cubic-bezier(.2, .85, .25, 1); }
 @keyframes rise { from { transform: translateY(100%); } }
 .player-bg { position: fixed; inset: 0; overflow: hidden; background: #1a1a1c; }
-.player-bg div { position: absolute; left: -10%; top: -10%; width: 30%; height: 30%; transform: scale(4); transform-origin: 0 0; background-size: cover; background-position: center; filter: blur(12px) saturate(1.7) brightness(.6); animation: drift 24s ease-in-out infinite alternate; }
-@keyframes drift { 0% { transform: scale(4) translate(0, 0) rotate(0deg); } 50% { transform: scale(4.5) translate(-4%, 3%) rotate(8deg); } 100% { transform: scale(4.2) translate(3%, -2%) rotate(-6deg); } }
+.player-bg div { position: absolute; left: -10%; top: -10%; width: 30%; height: 30%; transform: scale(4); transform-origin: 0 0; background-size: cover; background-position: center; filter: blur(12px) saturate(1.7) brightness(.6); }
 .player-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, .05), rgba(0, 0, 0, .35)); }
 .player-inner {
   position: relative; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px;
@@ -399,8 +396,8 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 .ctl.buffering { position: relative; }
 .ctl.buffering::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; border: 2px solid transparent; border-top-color: currentColor; opacity: .7; animation: spin .9s linear infinite; }
 .mini .ctl.buffering::after { inset: 4px; }
-@keyframes pop { 0% { transform: scale(.82); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
-.ctl.pop { animation: pop .32s cubic-bezier(.3, 1.4, .5, 1); }
+@keyframes pop { from { transform: scale(.9); } to { transform: scale(1); } }
+.ctl.pop { animation: pop .18s ease-out; }
 .ctl svg { transition: transform .2s; }
 .stage { touch-action: pan-y; will-change: transform; }
 .mini { touch-action: pan-y; }
@@ -417,7 +414,6 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 .row .hit:active { opacity: .55; }
 .menu a:active, .menu button:active { opacity: .55; }
 .tabs a svg { transition: transform .25s cubic-bezier(.3, 1.4, .5, 1); }
-.tabs a.on svg { transform: scale(1.08); }
 .tabs a:active svg { transform: scale(.88); }
 
 /* ---------- compact title bar while scrolling ---------- */
@@ -431,12 +427,6 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 body.scrolled .topnav { opacity: 1; transform: none; }
 @media (min-width: 900px) { .topnav { left: 240px; } }
 
-/* ---------- page entrance ---------- */
-@keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-main.enter > * { animation: enter .26s cubic-bezier(.2, .7, .3, 1) both; }
-main.enter > *:nth-child(2) { animation-delay: .03s; }
-main.enter > *:nth-child(3) { animation-delay: .06s; }
-main.enter > *:nth-child(n + 4) { animation-delay: .09s; }
 
 /* ---------- lyrics, Apple Music style ---------- */
 .lyrics { position: relative; width: 100%; aspect-ratio: 1 / 1.08; overflow: hidden; margin-top: 6px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 70%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 70%, transparent 100%); animation: lyrIn .45s cubic-bezier(.2, .8, .2, 1); }
@@ -452,30 +442,31 @@ main.enter > *:nth-child(n + 4) { animation-delay: .09s; }
 .player.lyrics-on .stage { display: none; }
 #lyricsBtn.on { color: #111; background: #fff; }
 .mini-lyric { color: var(--accent) !important; font-weight: 500; animation: subIn .35s cubic-bezier(.2, .8, .2, 1); }
-@keyframes subIn { from { opacity: 0; transform: translateY(6px); } }
+@keyframes subIn { from { opacity: 0; transform: translateY(3px); } }
 
 /* ---------- motion ---------- */
-.stage img.swap { animation: artSwap .5s cubic-bezier(.2, .8, .2, 1); }
-@keyframes artSwap { from { opacity: 0; transform: scale(1.06); filter: blur(8px); } }
-.mini.show { animation: miniIn .5s cubic-bezier(.2, 1.3, .4, 1); }
-@keyframes miniIn { from { transform: translateY(120%); opacity: 0; } }
-.mini-text.swap b, .mini-text.swap small { animation: subIn .35s cubic-bezier(.2, .8, .2, 1); }
-.now-text.swap h2, .now-text.swap .now-artist { animation: subIn .45s cubic-bezier(.2, .8, .2, 1); }
+.stage img.swap { animation: artSwap .3s ease-out; }
+@keyframes artSwap { from { opacity: .35; } }
+.mini.show { animation: miniIn .28s ease-out; }
+@keyframes miniIn { from { transform: translateY(24px); opacity: 0; } }
+.mini-text.swap b, .mini-text.swap small { animation: subIn .22s ease-out; }
+.now-text.swap h2, .now-text.swap .now-artist { animation: subIn .25s ease-out; }
 .now-btn.burst { animation: burst .55s cubic-bezier(.2, 1.4, .4, 1); position: relative; }
 .now-btn.burst::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid var(--accent); animation: ring .55s ease-out forwards; }
-@keyframes burst { 0% { transform: scale(.6); } 60% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes burst { 0% { transform: scale(.8); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
 @keyframes ring { from { opacity: .9; transform: scale(.6); } to { opacity: 0; transform: scale(1.6); } }
-.ctl svg.flip { animation: flip .32s cubic-bezier(.2, 1.3, .4, 1); }
-@keyframes flip { from { transform: scale(.4) rotate(-30deg); opacity: 0; } }
-.controls .side.on svg { animation: flip .35s cubic-bezier(.2, 1.3, .4, 1); }
-.toast { animation: toastIn .45s cubic-bezier(.2, 1.3, .4, 1); }
-@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 16px) scale(.92); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
-.reveal { opacity: 0; transform: translateY(14px) scale(.97); }
-.reveal.in-view { opacity: 1; transform: none; transition: opacity .5s cubic-bezier(.2, .8, .2, 1), transform .6s cubic-bezier(.2, .8, .2, 1); transition-delay: var(--d, 0s); }
+.ctl svg.flip { animation: flip .16s ease-out; }
+@keyframes flip { from { transform: scale(.75); opacity: 0; } }
+.toast { animation: toastIn .22s ease-out; }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .artist-head .cover { will-change: transform; }
 .feature .art img { transition: transform .8s cubic-bezier(.2, .8, .2, 1); }
 .row.playing .thumb { box-shadow: 0 0 0 2px var(--accent); }
 @media (prefers-reduced-motion: reduce) {
-  .reveal { opacity: 1 !important; transform: none !important; }
   .player-bg div { animation: none !important; }
 }
+
+.big-lyric { margin: -12px 0 -6px; min-height: 0; max-height: 0; overflow: hidden; color: #fff; font-size: 17px; font-weight: 600; line-height: 1.3; opacity: 0; transition: opacity .3s, max-height .3s; }
+.big-lyric.on { max-height: 3em; opacity: .9; }
+.player.lyrics-on .big-lyric { display: none; }
+#lyricsBtn.none { opacity: .35; }

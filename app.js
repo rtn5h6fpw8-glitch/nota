@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '22 · 22.10.2026';
+const APP_VERSION = '23 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -831,24 +831,36 @@ function parseLrc(text) {
   }
   return out.sort((a, b) => a.t - b.t);
 }
+const cleanTitle = (x) => String(x).replace(/\s*[([](feat|ft|with|prod|prod\.)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').replace(/\s*\[[^\]]*\]\s*$/, '').trim();
+const firstArtist = (x) => String(x || '').split(/,|\s(?:feat\.?|ft\.?|&|x|and)\s/i)[0].trim();
 function fetchLyrics(t) {
-  return cached('lyr:' + t.id, async () => {
-    const title = String(t.title).replace(/\s*[([](feat|ft|with|prod)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').replace(/^.*?\s[-–]\s(?=.)/, (m) => (t.artist && m.toLowerCase().includes(String(t.artist).toLowerCase()) ? '' : m)).trim();
-    const artist = String(t.artist || '').split(/,|\s(?:feat\.?|ft\.?|&|x)\s/i)[0].trim();
-    let d = null;
-    if (artist) d = await getJSONOnce('https://lrclib.net/api/get?' + new URLSearchParams({ artist_name: artist, track_name: title }), 10000).catch(() => null);
-    if (!d || (!d.syncedLyrics && !d.plainLyrics)) {
-      const q = new URLSearchParams(artist ? { track_name: title, artist_name: artist } : { q: title });
-      const l = await getJSONOnce('https://lrclib.net/api/search?' + q, 10000).catch(() => []);
-      d = (l || []).find((x) => x.syncedLyrics) || (l || []).find((x) => x.plainLyrics) || null;
+  return cached('lyr2:' + t.id, async () => {
+    /* candidates: the track's own artist/title, and "Artist - Title" written inside the title */
+    const cands = [{ a: firstArtist(t.artist), t: cleanTitle(t.title) }];
+    const m = String(t.title).match(/^(.+?)\s[-–]\s(.+)$/);
+    if (m) cands.unshift({ a: firstArtist(m[1]), t: cleanTitle(m[2]) });
+    const dur = t.preview ? 0 : t.duration || 0;
+    const good = (d) => d && (d.syncedLyrics || d.plainLyrics);
+    for (const c of cands) {
+      if (!c.a || !c.t) continue;
+      const d = await getJSONOnce('https://lrclib.net/api/get?' + new URLSearchParams({ artist_name: c.a, track_name: c.t }), 9000).catch(() => null);
+      if (good(d)) return pack(d);
     }
-    if (!d) return { none: true };
-    return { synced: d.syncedLyrics ? parseLrc(d.syncedLyrics) : null, plain: d.plainLyrics || '' };
+    for (const c of cands) {
+      const l = await getJSONOnce('https://lrclib.net/api/search?' + new URLSearchParams({ q: `${c.a} ${c.t}`.trim() }), 9000).catch(() => []);
+      const an = norm(c.a), tn = norm(c.t);
+      const hits = (l || []).filter((x) => good(x) && norm(x.trackName).includes(tn) && (!an || norm(x.artistName).includes(an) || an.includes(norm(x.artistName))));
+      const best = hits.find((x) => x.syncedLyrics && (!dur || Math.abs(x.duration - dur) < 4)) || hits.find((x) => x.syncedLyrics) || hits[0];
+      if (best) return pack(best);
+    }
+    return { none: true };
   }, 30 * 24 * 3600e3);
+  function pack(d) { return { synced: d.syncedLyrics ? parseLrc(d.syncedLyrics) : null, plain: d.plainLyrics || '', inst: !!d.instrumental }; }
 }
 const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '' };
 function loadLyrics(t) {
   lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : '';
+  $('#lyricsBtn').classList.toggle('none', !t || !!t.live);
   showMiniLyric('');
   if (!t || t.live) { if (lyr.open) drawLyrics(); return; }
   if (lyr.open) drawLyrics();
@@ -856,6 +868,7 @@ function loadLyrics(t) {
     if (!P.cur || P.cur.id !== lyr.forId) return;
     lyr.data = d;
     lyr.lines = d.synced && d.synced.length && !t.preview ? d.synced : null;
+    $('#lyricsBtn').classList.toggle('none', !!d.none);
     if (lyr.open) drawLyrics();
     syncLyrics(true);
   }, () => { if (lyr.open) drawLyrics(); });
@@ -868,7 +881,8 @@ function drawLyrics() {
   if (!t) return;
   if (t.live) { inner.innerHTML = '<p class="lyr-state">У радиоэфира нет текста песни</p>'; return; }
   if (!d) { inner.innerHTML = '<p class="lyr-state">Ищу текст…</p>'; return; }
-  if (d.none || (!d.synced && !d.plain)) { inner.innerHTML = '<p class="lyr-state">Текст этой песни не найден</p>'; return; }
+  if (d.inst) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
+  if (d.none || (!d.synced && !d.plain)) { inner.innerHTML = `<p class="lyr-state">Текста этой песни нет в базе текстов.<br><br>Тексты есть у большинства известных песен. У независимых артистов и электронной музыки их обычно нет.</p>`; return; }
   if (lyr.lines) {
     inner.innerHTML = lyr.lines.map((l) => `<button class="lyr-line${l.text ? '' : ' gap'}" data-lt="${l.t}">${l.text ? esc(l.text) : '•  •  •'}</button>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
   } else {
@@ -880,6 +894,9 @@ function drawLyrics() {
   syncLyrics(true);
 }
 function showMiniLyric(text) {
+  const bl = $('#bigLyric');
+  bl.textContent = text || '';
+  bl.classList.toggle('on', !!text);
   const ml = $('#miniLyric'), ma = $('#miniArtist');
   if (!text) { if (!ml.hidden) { ml.hidden = true; ma.hidden = false; } return; }
   ml.hidden = false; ma.hidden = true;
@@ -1882,34 +1899,6 @@ function prefetch(h) {
 }
 document.addEventListener('pointerdown', (e) => { const a = e.target.closest('a[href^="#"]'); if (a) prefetch(a.getAttribute('href')); }, { passive: true });
 
-/* cards and tiles float in as they come into view */
-const revealObs = 'IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches
-  ? new IntersectionObserver((list) => list.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in-view'); revealObs.unobserve(e.target); } }), { rootMargin: '0px 40px -20px 40px' })
-  : null;
-function revealIn() {
-  if (!revealObs) return;
-  view.querySelectorAll('.card:not(.reveal), .tile:not(.reveal), .feature:not(.reveal), .top-hit:not(.reveal)').forEach((el) => {
-    const i = [...el.parentNode.children].indexOf(el);
-    el.style.setProperty('--d', `${Math.min(i, 8) * 45}ms`);
-    el.classList.add('reveal');
-    revealObs.observe(el);
-  });
-}
-let revealTimer;
-new MutationObserver(() => { clearTimeout(revealTimer); revealTimer = setTimeout(revealIn, 16); }).observe(view, { childList: true, subtree: true });
-/* artist header: the photo drifts slower than the page and stretches when pulled down */
-let parallaxRaf = 0;
-window.addEventListener('scroll', () => {
-  if (parallaxRaf) return;
-  parallaxRaf = requestAnimationFrame(() => {
-    parallaxRaf = 0;
-    const c = view.querySelector('.artist-head .cover');
-    if (!c) return;
-    const y = window.scrollY;
-    c.style.transform = y >= 0 ? `translate3d(0,${y * 0.4}px,0)` : `scale(${1 + -y / 300})`;
-  });
-}, { passive: true });
-
 /* compact title bar: appears once the big page title scrolls away */
 let titleObs = null;
 function watchTitle() {
@@ -1940,7 +1929,6 @@ function route() {
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
   fn(arg);
   window.scrollTo(0, 0);
-  view.classList.remove('enter'); void view.offsetWidth; view.classList.add('enter');
   watchTitle();
   markPlaying();
 }
