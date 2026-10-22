@@ -190,7 +190,7 @@ const archive = {
       }))
       .sort((a, b) => (a.n && b.n ? a.n - b.n : 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
     const desc = String(first(m.description) || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-    return { id, title: albumTitle, artist: albumArtist, year: first(m.date || m.year).slice(0, 4), art, desc, tracks };
+    return { id, title: albumTitle, artist: albumArtist, year: String(first(m.date || m.year)).slice(0, 4).replace(/^0+$/, ''), art, desc, tracks };
   },
 };
 
