@@ -49,7 +49,7 @@
       <button class="now-btn" id="bigMore" aria-label="Ещё"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>
     </div>
     <div class="seek" id="seekWrap">
-      <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Позиция">
+      <div class="seekbar" id="seek" role="slider" tabindex="0" aria-label="Позиция" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="seek-track"><div class="seek-fill" id="seekFill"></div></div></div>
       <div class="times"><span id="tCur">0:00</span><span id="tLive" hidden>Прямой эфир</span><span id="tDur">0:00</span></div>
     </div>
     <div class="controls">

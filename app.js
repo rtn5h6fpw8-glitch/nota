@@ -479,7 +479,7 @@ function renderNow() {
   const video = t.src === 'youtube';
   $('#stage').classList.toggle('video', video);
   $('#bigArt').hidden = video;
-  $('#seek').disabled = !!t.live;
+  $('#seek').classList.toggle('disabled', !!t.live);
   $('#tLive').hidden = !t.live;
   $('#tCur').style.visibility = $('#tDur').style.visibility = t.live ? 'hidden' : '';
   $('#seekWrap').hidden = video;
@@ -502,7 +502,12 @@ function renderPlayState() {
   $('#repeat').classList.toggle('one', P.repeat === 'one');
   requestAnimationFrame(placeYT);
 }
-let seeking = false;
+let seekRatio = null;
+const seekDur = () => (isFinite(audio.duration) && audio.duration ? audio.duration : (P.cur && P.cur.duration) || 0);
+function setSeek(r) {
+  $('#seekFill').style.transform = `scaleX(${r})`;
+  $('#seek').setAttribute('aria-valuenow', Math.round(r * 100));
+}
 function renderTime() {
   const t = P.cur;
   if (!t || t.live) { $('#miniBar').style.width = '0'; return; }
@@ -510,7 +515,9 @@ function renderTime() {
   const c = audio.currentTime || 0;
   const p = d ? Math.min(100, (c / d) * 100) : 0;
   $('#miniBar').style.width = p + '%';
-  if (!seeking) { $('#seek').value = Math.round(p * 10); $('#seek').style.setProperty('--p', p + '%'); $('#tCur').textContent = fmt(c); }
+  if (seekRatio != null) return;
+  setSeek(p / 100);
+  $('#tCur').textContent = fmt(c);
   $('#tDur').textContent = '−' + fmt(Math.max(0, d - c));
 }
 function refreshLike() {
@@ -549,9 +556,40 @@ $('#repeat').onclick = () => {
   renderPlayState(); toast({ off: 'Повтор выключен', all: 'Повтор всей очереди', one: 'Повтор одного трека' }[P.repeat]);
 };
 $('#clearQueue').onclick = () => { P.queue = P.queue.slice(0, P.idx + 1); P.persist(); renderQueue(); };
-const seek = $('#seek');
-seek.addEventListener('input', () => { seeking = true; seek.style.setProperty('--p', seek.value / 10 + '%'); const d = audio.duration; if (isFinite(d)) $('#tCur').textContent = fmt((seek.value / 1000) * d); });
-seek.addEventListener('change', () => { const d = audio.duration; if (isFinite(d)) audio.currentTime = (seek.value / 1000) * d; seeking = false; });
+/* seek bar: follows the finger instantly, jumps the audio once on release */
+const seekEl = $('#seek');
+function seekAt(e) {
+  const r = seekEl.getBoundingClientRect();
+  seekRatio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  const d = seekDur();
+  setSeek(seekRatio);
+  $('#tCur').textContent = fmt(seekRatio * d);
+  $('#tDur').textContent = '−' + fmt(Math.max(0, d - seekRatio * d));
+}
+seekEl.addEventListener('pointerdown', (e) => {
+  if (seekEl.classList.contains('disabled') || !seekDur()) return;
+  e.preventDefault();
+  try { seekEl.setPointerCapture(e.pointerId); } catch {}
+  seekEl.classList.add('active');
+  seekAt(e);
+});
+seekEl.addEventListener('pointermove', (e) => { if (seekRatio != null) seekAt(e); });
+const seekEnd = () => {
+  if (seekRatio == null) return;
+  const d = seekDur();
+  if (d) audio.currentTime = seekRatio * d;
+  seekRatio = null;
+  seekEl.classList.remove('active');
+  renderTime();
+};
+seekEl.addEventListener('pointerup', seekEnd);
+seekEl.addEventListener('pointercancel', seekEnd);
+seekEl.addEventListener('lostpointercapture', seekEnd);
+seekEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  if (seekDur()) audio.currentTime = Math.min(seekDur(), Math.max(0, audio.currentTime + (e.key === 'ArrowRight' ? 5 : -5)));
+});
 const vol = $('#volume');
 vol.value = Math.round(audio.volume * 100); vol.style.setProperty('--p', vol.value + '%');
 vol.addEventListener('input', () => { audio.volume = vol.value / 100; vol.style.setProperty('--p', vol.value + '%'); store.set('volume', audio.volume); });
@@ -597,7 +635,7 @@ $('#miniOpen').onclick = openPlayer;
 $('#playerClose').onclick = () => closePlayer();
 let drag = null;
 playerEl.addEventListener('touchstart', (e) => {
-  drag = playerEl.scrollTop <= 0 && !e.target.closest('input') ? { y0: e.touches[0].clientY, t0: performance.now(), dy: 0 } : null;
+  drag = playerEl.scrollTop <= 0 && !e.target.closest('input, .seekbar') ? { y0: e.touches[0].clientY, t0: performance.now(), dy: 0 } : null;
 }, { passive: true });
 playerEl.addEventListener('touchmove', (e) => {
   if (!drag) return;
