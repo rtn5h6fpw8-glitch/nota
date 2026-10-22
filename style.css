@@ -138,6 +138,10 @@ img[onload]:not(.in) { opacity: 0; }
 .row.playing .meta b { color: var(--accent); }
 .tail { display: flex; align-items: center; color: var(--fg-2); font-size: 14px; font-variant-numeric: tabular-nums; }
 .chev-tail::after { content: ""; width: 8px; height: 8px; border-top: 2px solid var(--fg-3); border-right: 2px solid var(--fg-3); transform: rotate(45deg); margin-right: 4px; }
+.top-hit { display: flex; align-items: center; gap: 16px; padding: 14px; border-radius: 14px; background: var(--surface); }
+.top-hit .thumb { width: 84px; height: 84px; }
+.top-hit b { display: block; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.top-hit small { color: var(--fg-2); font-size: 14px; }
 .dots { width: 36px; height: 40px; display: grid; place-items: center; color: var(--fg); margin-right: -8px; }
 .dots svg { width: 18px; height: 18px; }
 .list.numbered .row::after { left: 34px; }

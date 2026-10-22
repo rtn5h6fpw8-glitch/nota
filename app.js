@@ -167,8 +167,8 @@ const lib = {
   pushSearch(q) { this.searches = [q, ...this.searches.filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8); this.save('searches'); },
 };
 function slim(t) {
-  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid } = t;
-  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid };
+  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at } = t;
+  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at };
 }
 
 /* ---------- own music (IndexedDB): files, tags and album covers ---------- */
@@ -469,6 +469,63 @@ const radio = {
   click(uuid) { if (uuid) this.q('/json/url/' + uuid).catch(() => {}); },
 };
 
+/* Deezer: official catalog of label artists. Pages, covers and official 30-second previews only. */
+let jsonpSeq = 0;
+function jsonp(url, ms = 10000) {
+  return new Promise((res, rej) => {
+    const cb = '__dz' + ++jsonpSeq;
+    const el = document.createElement('script');
+    const done = () => { delete window[cb]; el.remove(); clearTimeout(timer); };
+    const timer = setTimeout(() => { done(); rej(new Error('timeout')); }, ms);
+    window[cb] = (d) => { done(); d && d.error ? rej(new Error(d.error.message || 'deezer')) : res(d); };
+    el.src = url + (url.includes('?') ? '&' : '?') + 'output=jsonp&callback=' + cb;
+    el.onerror = () => { done(); rej(new Error('network')); };
+    document.head.appendChild(el);
+  });
+}
+const DZ = 'https://api.deezer.com';
+const deezer = {
+  get(path) { return jsonp(`${DZ}/${path}`); },
+  track(x, al) {
+    const a = x.album || al || {};
+    return {
+      id: 'dz:' + x.id, src: 'deezer', dzId: x.id, preview: true, title: x.title_short || x.title, artist: x.artist ? x.artist.name : '', dzArtist: x.artist ? x.artist.id : '',
+      album: a.title || '', dzAlbum: a.id || '', thumb: a.cover_medium || '', art: a.cover_big || a.cover_medium || '', artBig: a.cover_xl || '',
+      url: x.preview, at: Date.now(), duration: 30, link: x.link || '',
+    };
+  },
+  tracks(list, al) { return (list || []).filter((x) => x && x.preview && x.readable !== false).map((x) => this.track(x, al)); },
+  artist(a) { return { kind: 'dz-artist', id: a.id, name: a.name, avatar: a.picture_big || a.picture_medium || '', avatarBig: a.picture_xl || '', fans: a.nb_fan || 0, albums: a.nb_album || 0 }; },
+  album(a) { return { kind: 'dz-album', id: a.id, title: a.title, artist: a.artist ? a.artist.name : '', dzArtist: a.artist ? a.artist.id : '', art: a.cover_big || a.cover_medium || '', artBig: a.cover_xl || '', year: String(a.release_date || '').slice(0, 4), type: a.record_type || '' }; },
+  searchArtists(q, n = 12) { return this.get(`search/artist?q=${encodeURIComponent(q)}&limit=${n}`).then((d) => d.data.map((a) => this.artist(a))); },
+  searchTracks(q, n = 20) { return this.get(`search/track?q=${encodeURIComponent(q)}&limit=${n}`).then((d) => this.tracks(d.data)); },
+  searchAlbums(q, n = 20) { return this.get(`search/album?q=${encodeURIComponent(q)}&limit=${n}`).then((d) => d.data.map((a) => this.album(a))); },
+  chart(genre = 0, n = 50) { return this.get(`chart/${genre}/tracks?limit=${n}`).then((d) => this.tracks(d.data)); },
+  async artistPage(id) {
+    const [a, top, albums, related] = await Promise.all([
+      this.get(`artist/${id}`), this.get(`artist/${id}/top?limit=20`), this.get(`artist/${id}/albums?limit=100`).catch(() => ({ data: [] })), this.get(`artist/${id}/related?limit=14`).catch(() => ({ data: [] })),
+    ]);
+    const seen = new Set();
+    const alb = albums.data.map((x) => this.album({ ...x, artist: a })).filter((x) => { const k = x.title.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    return { ...this.artist(a), top: this.tracks(top.data), albums: alb.filter((x) => x.type !== 'single'), singles: alb.filter((x) => x.type === 'single'), related: related.data.map((r) => this.artist(r)) };
+  },
+  async albumPage(id) {
+    const a = await this.get(`album/${id}`);
+    const al = this.album(a);
+    al.tracks = this.tracks(a.tracks && a.tracks.data, a).map((t, i) => ({ ...t, n: i + 1 }));
+    al.label = a.label || '';
+    al.total = a.duration || 0;
+    return al;
+  },
+  /* preview links expire after 15 minutes: get a fresh one right before playing */
+  async fresh(t) {
+    if (t.url && Date.now() - (t.at || 0) < 10 * 60e3) return t.url;
+    const x = await this.get(`track/${t.dzId}`);
+    t.url = x.preview; t.at = Date.now();
+    return t.url;
+  },
+};
+
 const yt = {
   parse(s) {
     const m = String(s).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/|music\.youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/);
@@ -524,6 +581,10 @@ const P = {
       audio.dataset.blobUrl = url;
     }
     if (t.src === 'radio') radio.click(t.uuid);
+    if (t.src === 'deezer') {
+      try { url = await deezer.fresh(t); } catch { toast('Превью недоступно'); return this.skipAfterError(); }
+      if (this.queue[this.idx] !== t) return;
+    }
     audio.src = url;
     renderNow();
     try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') renderPlayState(); }
@@ -568,7 +629,7 @@ nextAudio.preload = 'auto';
 nextAudio.muted = true;
 function preloadNext() {
   const n = P.queue[P.idx + 1];
-  if (!n || !n.url || n.live || n.src === 'local' || n.src === 'youtube' || nextAudio.dataset.id === n.id) return;
+  if (!n || !n.url || n.live || n.src === 'local' || n.src === 'youtube' || n.src === 'deezer' || nextAudio.dataset.id === n.id) return;
   nextAudio.dataset.id = n.id;
   nextAudio.src = n.url;
 }
@@ -648,7 +709,7 @@ function renderNow() {
   $('#stage').classList.toggle('logo', !!t.live);
   $('#bigTitle').textContent = t.title;
   $('#bigArtist').textContent = t.artist || '';
-  $('#bigArtist').disabled = !t.artistId && !t.albumId;
+  $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
   $('#playerBg').style.backgroundImage = `url("${art.replace(/"/g, '%22')}")`;
   const video = t.src === 'youtube';
   $('#stage').classList.toggle('video', video);
@@ -772,7 +833,8 @@ $('#bigMore').onclick = () => P.cur && trackSheet(P.cur, {});
 $('#bigArtist').onclick = () => {
   const t = P.cur;
   if (!t) return;
-  if (t.artistId) { closePlayer(); go('#artist/' + t.artistId); }
+  if (t.dzArtist) { closePlayer(); go('#dz/' + t.dzArtist); }
+  else if (t.artistId) { closePlayer(); go('#artist/' + t.artistId); }
   else if (t.albumId) { closePlayer(); go('#album/' + encodeURIComponent(t.albumId)); }
 };
 
@@ -880,6 +942,9 @@ function trackSheet(t, { playlistId, q, fileView } = {}) {
   if (t.alId) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#al/' + t.alId); } });
   if (t.albumId) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#album/' + encodeURIComponent(t.albumId)); } });
   if (t.src === 'local') l.push({ label: 'Открыть папку артиста', icon: I.folder, fn: () => { closePlayer(); go('#mine-artist/' + encodeURIComponent(t.albumArtist || t.artist)); } });
+  if (t.dzArtist) l.push({ label: 'Перейти к артисту', icon: I.person, fn: () => { closePlayer(); go('#dz/' + t.dzArtist); } });
+  if (t.dzAlbum) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#dza/' + t.dzAlbum); } });
+  if (t.preview) l.push({ label: 'Слушать полностью на YouTube', icon: I.yt, fn: () => window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(`${t.artist} ${t.title}`), '_blank', 'noopener') });
   if (t.src === 'youtube') l.push({ label: 'Открыть на YouTube', icon: I.yt, fn: () => window.open('https://www.youtube.com/watch?v=' + t.ytId, '_blank', 'noopener') });
   if (playlistId) l.push({ label: 'Удалить из плейлиста', icon: I.trash, danger: true, fn: () => { const p = lib.playlists.find((x) => x.id === playlistId); if (p) { p.tracks = p.tracks.filter((x) => x.id !== t.id); lib.save('playlists'); route(); } } });
   if (fileView) l.push({ label: 'Удалить файл', icon: I.trash, danger: true, fn: async () => { await files.del(t.localKey); toast('Файл удалён'); route(); } });
@@ -919,7 +984,7 @@ function row(t, i, key, o = {}) {
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
     : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span>`;
-  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : '') + esc(t.artist || '');
+  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : t.preview ? '<span class="tag">30 с</span>' : '') + esc(t.artist || '');
   const dur = !o.noDur && !t.live && t.duration ? fmt(t.duration) : '';
   const q = o.q != null ? ` data-q="${o.q}"` : '';
   return `<li class="row" data-id="${esc(t.id)}"><button class="hit" data-play="${key}" data-i="${i}"${q}>${lead}<span class="meta"><b>${esc(t.title)}</b>${sub ? `<small>${sub}</small>` : ''}</span></button><span class="tail">${o.showDur ? dur : ''}<button class="dots" data-more="${key}" data-i="${i}"${q} aria-label="Действия">${I.more}</button></span></li>`;
@@ -929,10 +994,10 @@ function rows(list, o = {}) {
   const k = o.key || reg(list);
   return `<ul class="list${o.numbered ? ' numbered' : ''}${o.cls ? ' ' + o.cls : ''}">${list.map((t, i) => row(t, i, k, o)).join('')}</ul>`;
 }
-const hrefOf = (a) => a.kind === 'artist' ? `#artist/${a.id}` : a.kind === 'au-album' ? `#al/${a.id}` : `#album/${encodeURIComponent(a.id)}`;
+const hrefOf = (a) => a.kind === 'dz-artist' ? `#dz/${a.id}` : a.kind === 'dz-album' ? `#dza/${a.id}` : a.kind === 'artist' ? `#artist/${a.id}` : a.kind === 'au-album' ? `#al/${a.id}` : `#album/${encodeURIComponent(a.id)}`;
 function card(a) {
-  const round = a.kind === 'artist';
-  const t2 = round ? (a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист') : a.artist || a.year || '';
+  const round = a.kind === 'artist' || a.kind === 'dz-artist';
+  const t2 = a.kind === 'dz-artist' ? (a.fans ? fmtCount(a.fans) + ' поклонников' : 'Артист') : round ? (a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист') : a.kind === 'dz-album' ? [a.year, a.artist].filter(Boolean).join(' · ') : a.artist || a.year || '';
   return `<a class="card${round ? ' center' : ''}" href="${hrefOf(a)}"><div class="art${round ? ' round' : ''}">${a.kind === 'ia-album' ? sleeve(a.art) : round ? img(a.avatar, true, a.avatarBig, '(min-width: 600px) 140px, 30vw') : img(a.art, false, a.artBig)}</div><span class="t1">${esc(round ? a.name : a.title)}</span><span class="t2">${esc(t2)}</span></a>`;
 }
 function playCard(t, k, i) {
@@ -1050,6 +1115,7 @@ const views = {
     let h = `<h1 class="page-title">Главная</h1>`;
     h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => shelf(l.slice(0, 10).map((a) => feature(a, 'Альбом недели')).join(''), 'wide'), skShelf(3, 'wide'));
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
+    h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => rowShelf(l.slice(0, 20)), skRows(4)));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
     h += section('Артисты недели', lazy(mapP(trendingWeek(), (t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)));
     h += section('Андеграунд-рэп', lazy(cached('au-pl:rage', () => audius.search('playlists', 'rage', 16)), (l) => shelf(l.map(card).join(''))), '#underground');
@@ -1062,6 +1128,7 @@ const views = {
   browse() {
     let h = `<h1 class="page-title">Обзор</h1><p class="page-sub">Музыка независимых артистов со всего мира</p>`;
     h += `<a class="feature" href="#underground" style="margin-top:22px"><div><div class="eyebrow">Подборка</div><div class="ft">Андеграунд-рэп</div><div class="fs">Рейдж, плагг, фонк, дрилл и трэп</div></div><div class="art" data-underground-art>${img('')}</div></a>`;
+    h += section('Официальные чарты', lazy(cached('dz-chart:116', () => deezer.chart(116, 40), 6 * 3600e3), (l) => `<p class="note" style="margin:-4px 0 8px">Хип-хоп, мир · превью по 30 секунд</p>` + rowShelf(l.slice(0, 20)), skRows(4)));
     h += section('Рэперы', `<ul class="menu"><li><a href="#rappers">${I.folder}<span>Папки рэперов А–Я</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
     h += section('Чарты', `<ul class="menu">
       <li><a href="#chart/week">${I.note}<span>Топ-100 недели</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
@@ -1316,6 +1383,38 @@ const views = {
     }, () => { const out = $('#rapList'); if (out) out.innerHTML = `<p class="err">Не удалось загрузить.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
 
+  dz(id) {
+    view.innerHTML = `<div class="artist-head"><a class="back" href="#" data-back>${I.back}</a></div>` + skRows(5);
+    whenReady(cached('dz-artist:' + id, () => deezer.artistPage(id), 12 * 3600e3), (a) => {
+      if (location.hash !== '#dz/' + id) return;
+      const k = reg(a.top);
+      let h = `<div class="artist-head"><img class="cover" src="${esc(a.avatarBig || a.avatar)}" alt="" referrerpolicy="no-referrer"><a class="back" href="#" data-back>${I.back}</a>
+        <div class="who"><div><h1>${esc(a.name)}</h1><p>${a.fans ? fmtCount(a.fans) + ' поклонников · ' : ''}официальный каталог</p></div></div></div>`;
+      h += a.top.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Превью</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` : '';
+      h += `<p class="note">Официальные 30-секундные превью. Полную версию трека можно открыть на YouTube через «…».</p>`;
+      if (a.top.length) h += section('Популярные треки', rows(a.top.slice(0, 10), { key: k }));
+      if (a.albums.length) h += section('Альбомы', shelf(a.albums.map(card).join('')));
+      if (a.singles.length) h += section('Синглы и EP', shelf(a.singles.map(card).join('')));
+      if (a.related.length) h += section('Похожие артисты', shelf(a.related.map(card).join(''), 'small'));
+      view.innerHTML = h;
+      markPlaying();
+    }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть артиста.<button class="text-btn" data-retry>Повторить</button></p>`; });
+  },
+
+  dza(id) {
+    view.innerHTML = backBtn() + `<div class="hero"><div class="art sk"></div></div>` + skRows(6);
+    whenReady(cached('dz-album:' + id, () => deezer.albumPage(id), 12 * 3600e3), (a) => {
+      if (location.hash !== '#dza/' + id) return;
+      const k = reg(a.tracks);
+      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art)}</div><div>
+        <h1>${esc(a.title)}</h1><a class="by" href="#dz/${a.dzArtist}">${esc(a.artist)}</a>
+        <div class="info">${[{ album: 'Альбом', single: 'Сингл', ep: 'EP', compile: 'Сборник' }[a.type] || 'Альбом', a.year].filter(Boolean).join(' · ')}</div></div></div>` +
+        (a.tracks.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Превью</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` + rows(a.tracks, { key: k, numbered: true, sub: () => '<span class="tag">30 с</span>' }) : '<div class="empty"><b>Превью недоступны</b></div>') +
+        `<p class="foot">${tracksWord(a.tracks.length)}${a.total ? ', ' + fmtLong(a.total) : ''}${a.label ? '<br>' + esc(a.label) : ''}<br>Официальные превью по 30 секунд, данные Deezer</p>`;
+      markPlaying();
+    }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть альбом.<button class="text-btn" data-retry>Повторить</button></p>`; });
+  },
+
   playlist(id) {
     const p = lib.playlists.find((x) => x.id === id);
     if (!p) { view.innerHTML = backBtn('#library') + `<div class="empty"><b>Плейлист не найден</b></div>`; return; }
@@ -1338,7 +1437,7 @@ const views = {
       <div class="seg" id="sTabs">${[['all', 'Всё'], ['artists', 'Артисты'], ['tracks', 'Треки'], ['albums', 'Альбомы'], ['radio', 'Радио']].map(([v, n]) => `<button data-stab="${v}" class="${v === tab0 ? 'on' : ''}">${n}</button>`).join('')}</div>
       <div id="results"></div>`;
     const input = $('#q');
-    const run = debounce(() => doSearch(input.value.trim()), 420);
+    const run = debounce(() => doSearch(input.value.trim()), 280);
     input.addEventListener('input', () => { $('#qClear').hidden = !input.value; run(); });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { input.blur(); doSearch(input.value.trim(), true); } });
     $('#qClear').onclick = (e) => { e.preventDefault(); input.value = ''; $('#qClear').hidden = true; doSearch(''); input.focus(); };
@@ -1428,26 +1527,42 @@ async function doSearch(q, commit) {
     return;
   }
   const all = tab === 'all';
+  const n = norm(q);
+  /* starts with the query > contains it > anything else; popularity decides inside each group */
+  const score = (name) => { const v = norm(name); return v.startsWith(n) ? 1 : v.includes(n) ? 2 : 3; };
+  const byMatch = (l, key, pop) => l.slice().sort((x, y) => score(x[key]) - score(y[key]) || (y[pop] || 0) - (x[pop] || 0));
+  const grid = (l) => all ? shelf(l.map(card).join('')) : `<div class="grid">${l.map(card).join('')}</div>`;
+  const dzArtists = cached('s-dza:' + q, () => deezer.searchArtists(q, all ? 10 : 30), 12 * 3600e3);
+  const dzTracks = cached('s-dzt:' + q, () => deezer.searchTracks(q, all ? 10 : 40), 12 * 3600e3);
+  const auUsers = cached('s-u:' + q, () => audius.search('users', q, 30));
+  const auTracks = cached('s-t:' + q, () => audius.search('tracks', q, all ? 20 : 60));
   let h = '';
-  const artistsP = cached('s-u:' + q, () => audius.search('users', q, all ? 12 : 40));
-  const tracksP = cached('s-t:' + q, () => audius.search('tracks', q, all ? 30 : 60));
   if (all || tab === 'artists') {
     const mine = matchArtists(groupMine(await files.tracks()), q);
     if (seq !== searchSeq) return;
-    if (mine.length) h += section('Мои папки', `<ul class="list">${mine.slice(0, all ? 4 : 50).map((g) => `<li class="row"><a class="hit" href="#mine-artist/${encodeURIComponent(g.name)}"><span class="thumb">${[...g.albums.values()].find((x) => x.art) ? `<img src="${[...g.albums.values()].find((x) => x.art).art}" alt="">` : `<div class="ph">${I.folder}</div>`}</span><span class="meta"><b>${esc(g.name)}</b><small>Моя музыка · ${tracksWord(g.tracks.length)}</small></span></a><span class="tail"></span></li>`).join('')}</ul>`);
-    h += lazy(mapP(rapIndex(), (l) => matchArtists(l, q)), (l) => l.length ? section('Папки рэперов', `<ul class="list">${l.slice(0, all ? 5 : 60).map(folderRow).join('')}</ul>`, all && l.length > 5 ? '#rappers' : '') : '', '');
+    if (mine.length) h += section('Мои папки', `<ul class="list">${mine.slice(0, all ? 4 : 50).map((g) => `<li class="row"><a class="hit" href="#mine-artist/${encodeURIComponent(g.name)}"><span class="thumb">${[...g.albums.values()].find((x) => x.art) ? `<img src="${[...g.albums.values()].find((x) => x.art).art}" alt="">` : `<div class="ph">${I.folder}</div>`}</span><span class="meta"><b>${esc(g.name)}</b><small>Моя музыка · ${tracksWord(g.tracks.length)}</small></span></a><span class="tail chev-tail"></span></li>`).join('')}</ul>`);
+    h += lazy(mapP(dzArtists, (l) => byMatch(l, 'name', 'fans').filter((a) => score(a.name) < 3 || a.fans > 50000)), (l) => {
+      if (!l.length) return '';
+      const top = l[0];
+      const best = all && score(top.name) <= 1 ? `<a class="top-hit" href="#dz/${top.id}"><span class="thumb round">${img(top.avatar, true, top.avatarBig, '96px')}</span><span><b>${esc(top.name)}</b><small>Артист · ${fmtCount(top.fans)} поклонников</small></span></a>` : '';
+      const rest = (best ? l.slice(1) : l).filter((x) => x.fans >= 5000);
+      return (best ? section('Лучший результат', best) : '') + (rest.length ? section('Артисты', all ? shelf(rest.map(card).join(''), 'small') : `<div class="grid">${rest.map(card).join('')}</div>`) : '');
+    }, skShelf(4, 'small', true));
+    h += lazy(mapP(rapIndex(), (l) => matchArtists(l, q)), (l) => l.length ? section('Папки рэперов', `<ul class="list">${l.slice(0, all ? 4 : 60).map(folderRow).join('')}</ul>`, all && l.length > 4 ? '#rappers' : '') : '', '');
   }
-  if (all || tab === 'artists') h += lazy(artistsP, (l) => l.length ? section('Другие артисты', all ? shelf(l.map(card).join(''), 'small') : `<div class="grid">${l.map(card).join('')}</div>`) : (all ? '' : '<div class="empty"><b>Артистов не нашлось</b></div>'), skShelf(4, 'small', true));
   if (all || tab === 'tracks') {
-    h += lazy(tracksP, (l) => l.length ? section('Треки', rows(all ? l.slice(0, 8) : l, { showDur: true })) : (all ? '' : '<div class="empty"><b>Треков не нашлось</b></div>'), skRows(all ? 4 : 10));
-    if (jamendo.on) h += lazy(cached('s-jm:' + q, () => jamendo.tracks({ search: q, order: 'relevance' })), (l) => l.length ? section('Jamendo', rows(all ? l.slice(0, 6) : l, { showDur: true })) : '', '');
+    h += lazy(dzTracks, (l) => l.length ? section('Треки · превью', rows(all ? l.slice(0, 5) : l)) : '', skRows(all ? 4 : 10));
+    h += lazy(auTracks, (l) => l.length ? section('Полные треки независимых артистов', rows(all ? l.slice(0, 5) : l, { showDur: true })) : (all ? '' : ''), all ? '' : skRows(6));
+    if (jamendo.on) h += lazy(cached('s-jm:' + q, () => jamendo.tracks({ search: q, order: 'relevance' })), (l) => l.length ? section('Jamendo', rows(all ? l.slice(0, 5) : l, { showDur: true })) : '', '');
   }
   if (all || tab === 'albums') {
-    h += lazy(cached('s-p:' + q, () => audius.search('playlists', q, 24)), (l) => l.length ? section('Альбомы и плейлисты', all ? shelf(l.map(card).join('')) : `<div class="grid">${l.map(card).join('')}</div>`) : '', all ? skShelf(4) : skGrid(4));
-    h += lazy(cached('s-ia2:' + q, () => archive.find(q, 30)), (l) => l.length ? section('Internet Archive', all ? shelf(l.map(card).join('')) : `<div class="grid">${l.map(card).join('')}</div>`) : '', '');
+    h += lazy(cached('s-dzal:' + q, () => deezer.searchAlbums(q, 24), 12 * 3600e3), (l) => l.length ? section('Альбомы', grid(l)) : '', all ? skShelf(4) : skGrid(4));
+    h += lazy(cached('s-p:' + q, () => audius.search('playlists', q, 24)), (l) => l.length ? section('Плейлисты', grid(byMatch(l, 'title', 'count'))) : '', '');
+    h += lazy(cached('s-ia2:' + q, () => archive.find(q, 30)), (l) => l.length ? section('Internet Archive', grid(l)) : '', '');
   }
-  if (all || tab === 'radio') h += lazy(cached('s-r:' + q, () => Promise.all([radio.search({ name: q, limit: 20 }), radio.search({ tag: q.toLowerCase(), limit: 20 })]).then(([a, b]) => { const s = new Set(); return [...a, ...b].filter((t) => !s.has(t.id) && s.add(t.id)); })), (l) => l.length ? section('Радиостанции', rows(all ? l.slice(0, 5) : l)) : (all ? '' : '<div class="empty"><b>Станций не нашлось</b></div>'), all ? '' : skRows(8));
-  if (seq === searchSeq) out.innerHTML = h;
+  if (all || tab === 'artists') h += lazy(mapP(auUsers, (l) => byMatch(l, 'name', 'followers').filter((a) => score(a.name) < 3).slice(0, all ? 12 : 40)), (l) => l.length ? section('Независимые артисты', all ? shelf(l.map(card).join(''), 'small') : `<div class="grid">${l.map(card).join('')}</div>`) : '', '');
+  if (all || tab === 'radio') h += lazy(cached('s-r:' + q, () => Promise.all([radio.search({ name: q, limit: 20 }), radio.search({ tag: q.toLowerCase(), limit: 20 })]).then(([a, b]) => { const s2 = new Set(); return [...a, ...b].filter((t) => !s2.has(t.id) && s2.add(t.id)); })), (l) => l.length ? section('Радиостанции', rows(all ? l.slice(0, 4) : l)) : (all ? '' : '<div class="empty"><b>Станций не нашлось</b></div>'), all ? '' : skRows(8));
+  if (seq === searchSeq) out.innerHTML = h || '<div class="empty"><b>Ничего не нашлось</b>Проверьте написание или попробуйте другой запрос.</div>';
 }
 
 /* start loading a page's data the moment a finger touches its link */
@@ -1456,6 +1571,8 @@ function prefetch(h) {
   const arg = rest.join('/');
   if (name === 'al') cached('au-al:' + arg, () => audius.album(arg)).catch(() => {});
   else if (name === 'artist') { cached('au-user:' + arg, () => audius.artist(arg)).catch(() => {}); cached('au-utracks:' + arg, () => audius.artistTracks(arg)).catch(() => {}); }
+  else if (name === 'dz') cached('dz-artist:' + arg, () => deezer.artistPage(arg), 12 * 3600e3).catch(() => {});
+  else if (name === 'dza') cached('dz-album:' + arg, () => deezer.albumPage(arg), 12 * 3600e3).catch(() => {});
   else if (name === 'album') { const id = decodeURIComponent(arg); cached('ia-album:' + id, () => archive.album(id)).catch(() => {}); }
 }
 document.addEventListener('pointerdown', (e) => { const a = e.target.closest('a[href^="#"]'); if (a) prefetch(a.getAttribute('href')); }, { passive: true });
@@ -1466,7 +1583,7 @@ function route() {
   const [name, ...rest] = h.split('/');
   const arg = rest.join('/');
   const fn = views[name] || views.home;
-  const tab = { rappers: 'browse', chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
+  const tab = { dz: null, dza: null, rappers: 'browse', chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
   const active = tab === undefined ? (views[name] ? name : 'home') : tab;
   if (active !== null) $$('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === active));
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
@@ -1480,7 +1597,7 @@ let idleTimer;
 function prefetchVisible() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    const links = [...new Set($$('#view a[href^="#al/"], #view a[href^="#artist/"], #view a[href^="#album/"]').map((a) => a.getAttribute('href')))].slice(0, 8);
+    const links = [...new Set($$('#view a[href^="#al/"], #view a[href^="#artist/"], #view a[href^="#album/"], #view a[href^="#dz/"], #view a[href^="#dza/"]').map((a) => a.getAttribute('href')))].slice(0, 8);
     links.forEach((h, i) => setTimeout(() => prefetch(h), i * 250));
   }, 2500);
 }
