@@ -359,8 +359,8 @@ const audius = {
       art: this.art(p.artwork), artBig: this.art(p.artwork, true), isAlbum: !!p.is_album, count: p.track_count || 0, desc: p.description || '', date: p.release_date || p.created_at || '',
     };
   },
-  trending({ genre = '', time = 'week', limit = 50 } = {}) {
-    const p = { time, limit }; if (genre) p.genre = genre;
+  trending({ genre = '', time = 'week', limit = 50, offset = 0 } = {}) {
+    const p = { time, limit }; if (genre) p.genre = genre; if (offset) p.offset = offset;
     return this.get('tracks/trending', p).then((d) => this.tracks(d));
   },
   trendingLists(type, time = 'week', limit = 20) { return this.get('playlists/trending', { type, time, limit }).then((d) => d.map((p) => this.list(p))); },
@@ -1009,6 +1009,28 @@ function artistsOf(tracks, n = 14) {
   return out;
 }
 
+/* every rapper from the rap and trap charts, each with an own folder (artist page) */
+const RAP_SOURCES = [
+  ['Hip-Hop/Rap', 'week', 0], ['Hip-Hop/Rap', 'month', 0], ['Hip-Hop/Rap', 'allTime', 0], ['Hip-Hop/Rap', 'allTime', 100], ['Hip-Hop/Rap', 'allTime', 200],
+  ['Trap', 'week', 0], ['Trap', 'month', 0], ['Trap', 'allTime', 0], ['Trap', 'allTime', 100],
+];
+const rapIndex = () => cached('rap-index', async () => {
+  const lists = await Promise.all(RAP_SOURCES.map(([genre, time, offset]) => audius.trending({ genre, time, limit: 100, offset }).catch(() => [])));
+  const all = artistsOf(lists.flat(), 5000);
+  if (!all.length) throw new Error('empty');
+  return all.sort((a, b) => b.followers - a.followers);
+});
+const norm = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, '');
+function matchArtists(list, q, key = 'name') {
+  const n = norm(q);
+  if (!n) return [];
+  return list.map((a) => { const v = norm(a[key]); const i = v.indexOf(n); return { a, r: i === 0 ? 0 : i > 0 ? 1 : -1 }; })
+    .filter((x) => x.r >= 0).sort((x, y) => x.r - y.r).map((x) => x.a);
+}
+function folderRow(a) {
+  return `<li class="row"><a class="hit" href="#artist/${a.id}"><span class="thumb round">${img(a.avatar, true)}</span><span class="meta"><b>${esc(a.name)}</b><small>${a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист'}</small></span></a><span class="tail">${I.chev.replace('<svg', '<svg width="18" height="18" style="color:var(--fg-3)"')}</span></li>`;
+}
+
 /* ======================= views ======================= */
 const view = $('#view');
 const views = {
@@ -1030,6 +1052,7 @@ const views = {
   browse() {
     let h = `<h1 class="page-title">Обзор</h1><p class="page-sub">Музыка независимых артистов со всего мира</p>`;
     h += `<a class="feature" href="#underground" style="margin-top:22px"><div><div class="eyebrow">Подборка</div><div class="ft">Андеграунд-рэп</div><div class="fs">Рейдж, плагг, фонк, дрилл и трэп</div></div><div class="art" data-underground-art>${img('')}</div></a>`;
+    h += section('Рэперы', `<ul class="menu"><li><a href="#rappers">${I.folder}<span>Папки рэперов А–Я</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
     h += section('Чарты', `<ul class="menu">
       <li><a href="#chart/week">${I.note}<span>Топ-100 недели</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
       <li><a href="#chart/month">${I.note}<span>Топ-100 месяца</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
@@ -1247,11 +1270,32 @@ const views = {
 
   underground() {
     const lists = [['rage', 'Рейдж'], ['plugg', 'Плагг'], ['underground rap', 'Андеграунд'], ['phonk', 'Фонк'], ['drill', 'Дрилл'], ['emo rap', 'Эмо-рэп']];
-    let h = backBtn('#browse') + `<h1 class="page-title">Андеграунд-рэп</h1><p class="page-sub">Независимые рэперы, которые сами выкладывают свою музыку</p>`;
+    let h = backBtn('#browse') + `<h1 class="page-title">Андеграунд-рэп</h1><p class="page-sub">Независимые рэперы, которые сами выкладывают свою музыку</p>
+      <ul class="menu"><li><a href="#rappers">${I.folder}<span>Все рэперы: папки А–Я</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`;
     h += lazy(cached('au-genre:Hip-Hop/Rap:week', () => audius.trending({ genre: 'Hip-Hop/Rap', time: 'week', limit: 60 })), (l) => { const k = reg(l); return playActions(k) + section('Хип-хоп: хиты недели', rows(l.slice(0, 10), { key: k, showDur: true }), '#genre/' + encodeURIComponent('Hip-Hop/Rap')) + section('Рэперы недели', shelf(artistsOf(l, 14).map(card).join(''), 'small')); }, skRows(6));
     h += section('Трэп', lazy(cached('au-genre:Trap:week', () => audius.trending({ genre: 'Trap', time: 'week', limit: 60 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#genre/Trap');
     for (const [q, n] of lists) h += section(n, lazy(cached('au-pl:' + q, () => audius.search('playlists', q, 16)), (l) => l.length ? shelf(l.map(card).join('')) : '<p class="note">Пока пусто</p>'));
     view.innerHTML = h;
+  },
+
+  rappers() {
+    view.innerHTML = backBtn('#browse') + `<h1 class="page-title">Рэперы</h1>
+      <div class="search-bar"><label class="field">${I.search}<input id="rq" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Найти рэпера"></label></div>
+      <div id="rapList">${skRows(10)}</div>`;
+    whenReady(rapIndex(), (list) => {
+      const out = $('#rapList');
+      if (!out) return;
+      const draw = (q) => {
+        const l = q ? matchArtists(list, q) : list.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', { sensitivity: 'base' }));
+        if (!l.length) { out.innerHTML = '<div class="empty"><b>Не нашлось</b>Попробуйте общий поиск: там больше артистов.</div>'; return; }
+        if (q) { out.innerHTML = `<ul class="list">${l.map(folderRow).join('')}</ul>`; return; }
+        const groups = new Map();
+        for (const a of l) { const ch = (a.name.trim()[0] || '#').toUpperCase(); const k = /\p{L}/u.test(ch) ? ch : '#'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+        out.innerHTML = `<p class="page-sub">${list.length} ${plural(list.length, 'папка', 'папки', 'папок')}</p>` + [...groups].sort((x, y) => (x[0] === '#') - (y[0] === '#')).map(([k, g]) => `<section class="section" style="margin-top:18px"><div class="sec-head"><h2>${esc(k)}</h2></div><ul class="list">${g.map(folderRow).join('')}</ul></section>`).join('');
+      };
+      draw('');
+      $('#rq').addEventListener('input', (e) => draw(e.target.value.trim()));
+    }, () => { const out = $('#rapList'); if (out) out.innerHTML = `<p class="err">Не удалось загрузить.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
 
   playlist(id) {
@@ -1369,7 +1413,13 @@ async function doSearch(q, commit) {
   let h = '';
   const artistsP = cached('s-u:' + q, () => audius.search('users', q, all ? 12 : 40));
   const tracksP = cached('s-t:' + q, () => audius.search('tracks', q, all ? 30 : 60));
-  if (all || tab === 'artists') h += lazy(artistsP, (l) => l.length ? section('Артисты', all ? shelf(l.map(card).join(''), 'small') : `<div class="grid">${l.map(card).join('')}</div>`) : (all ? '' : '<div class="empty"><b>Артистов не нашлось</b></div>'), skShelf(4, 'small', true));
+  if (all || tab === 'artists') {
+    const mine = matchArtists(groupMine(await files.tracks()), q);
+    if (seq !== searchSeq) return;
+    if (mine.length) h += section('Мои папки', `<ul class="list">${mine.slice(0, all ? 4 : 50).map((g) => `<li class="row"><a class="hit" href="#mine-artist/${encodeURIComponent(g.name)}"><span class="thumb">${[...g.albums.values()].find((x) => x.art) ? `<img src="${[...g.albums.values()].find((x) => x.art).art}" alt="">` : `<div class="ph">${I.folder}</div>`}</span><span class="meta"><b>${esc(g.name)}</b><small>Моя музыка · ${tracksWord(g.tracks.length)}</small></span></a><span class="tail"></span></li>`).join('')}</ul>`);
+    h += lazy(mapP(rapIndex(), (l) => matchArtists(l, q)), (l) => l.length ? section('Папки рэперов', `<ul class="list">${l.slice(0, all ? 5 : 60).map(folderRow).join('')}</ul>`, all && l.length > 5 ? '#rappers' : '') : '', '');
+  }
+  if (all || tab === 'artists') h += lazy(artistsP, (l) => l.length ? section('Другие артисты', all ? shelf(l.map(card).join(''), 'small') : `<div class="grid">${l.map(card).join('')}</div>`) : (all ? '' : '<div class="empty"><b>Артистов не нашлось</b></div>'), skShelf(4, 'small', true));
   if (all || tab === 'tracks') {
     h += lazy(tracksP, (l) => l.length ? section('Треки', rows(all ? l.slice(0, 8) : l, { showDur: true })) : (all ? '' : '<div class="empty"><b>Треков не нашлось</b></div>'), skRows(all ? 4 : 10));
     if (jamendo.on) h += lazy(cached('s-jm:' + q, () => jamendo.tracks({ search: q, order: 'relevance' })), (l) => l.length ? section('Jamendo', rows(all ? l.slice(0, 6) : l, { showDur: true })) : '', '');
@@ -1398,7 +1448,7 @@ function route() {
   const [name, ...rest] = h.split('/');
   const arg = rest.join('/');
   const fn = views[name] || views.home;
-  const tab = { chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
+  const tab = { rappers: 'browse', chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
   const active = tab === undefined ? (views[name] ? name : 'home') : tab;
   if (active !== null) $$('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === active));
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
@@ -1432,5 +1482,6 @@ $('#folderPick').addEventListener('change', importPicked);
 /* ======================= boot ======================= */
 route();
 if (P.cur) renderNow(); else renderPlayState();
+setTimeout(() => rapIndex().catch(() => {}), 1500);
 files.loadCovers().then(() => { if (P.cur && P.cur.src === 'local') renderNow(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
