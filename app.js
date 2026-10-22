@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '17 · 22.10.2026';
+const APP_VERSION = '19 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -112,7 +112,6 @@ const I = {
   chev: '<svg viewBox="0 0 24 24"><path d="M8.6 4.6 10 3.2l8.8 8.8L10 20.8l-1.4-1.4L16 12z"/></svg>',
   search: '<svg viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 0 1 6 12l4.8 4.8-1.5 1.5-4.8-4.8A7.5 7.5 0 1 1 10.5 3zm0 2.1a5.4 5.4 0 1 0 0 10.8 5.4 5.4 0 0 0 0-10.8z"/></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M5.6 4.2 12 10.6l6.4-6.4 1.4 1.4-6.4 6.4 6.4 6.4-1.4 1.4-6.4-6.4-6.4 6.4-1.4-1.4 6.4-6.4-6.4-6.4z"/></svg>',
-  yt: '<svg viewBox="0 0 24 24"><path d="M21.6 7.2a2.5 2.5 0 0 0-1.8-1.8C18.2 5 12 5 12 5s-6.2 0-7.8.4A2.5 2.5 0 0 0 2.4 7.2 26 26 0 0 0 2 12a26 26 0 0 0 .4 4.8 2.5 2.5 0 0 0 1.8 1.8C5.8 19 12 19 12 19s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8A26 26 0 0 0 22 12a26 26 0 0 0-.4-4.8zM10 15V9l5.2 3z"/></svg>',
   edit: '<svg viewBox="0 0 24 24"><path d="M4 17.2V20h2.8l8.3-8.3-2.8-2.8zM19.7 7.1a1 1 0 0 0 0-1.4l-1.4-1.4a1 1 0 0 0-1.4 0l-1.6 1.6 2.8 2.8z"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4.2l2 2.2h6.8A2.5 2.5 0 0 1 21 8.7v8.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>',
   note: '<svg viewBox="0 0 24 24"><path d="M19 3v12.5a3.5 3.5 0 1 1-2-3.2V7.2l-8 1.9v8.4a3.5 3.5 0 1 1-2-3.2V5.5z"/></svg>',
@@ -139,9 +138,9 @@ function sleeve(src) {
 
 /* ======================= library ======================= */
 const lib = {
-  liked: store.get('liked', []),
+  liked: store.get('liked', []).filter((t) => t.src !== 'youtube'),
   playlists: store.get('playlists', []),
-  recent: store.get('recent', []),
+  recent: store.get('recent', []).filter((t) => t.src !== 'youtube'),
   stations: store.get('stations', []),
   artists: store.get('artists', []),
   searches: store.get('searches', []),
@@ -169,8 +168,8 @@ const lib = {
   pushSearch(q) { this.searches = [q, ...this.searches.filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8); this.save('searches'); },
 };
 function slim(t) {
-  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at, link } = t;
-  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at, link };
+  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at, link } = t;
+  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at, link };
 }
 
 /* ---------- own music (IndexedDB): files, tags and album covers ---------- */
@@ -193,10 +192,92 @@ function id3Picture(d, v22) {
   if (!/^image\//.test(mime)) mime = 'image/jpeg';
   return j < d.length ? new Blob([d.slice(j)], { type: mime }) : null;
 }
-/* reads ID3v2 tags (title, artist, album, track, cover) from the start of an MP3 */
 async function readTags(file) {
   const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+  if (head[0] === 0x66 && head[1] === 0x4c && head[2] === 0x61 && head[3] === 0x43) return readFlac(file);
   if (head[0] !== 0x49 || head[1] !== 0x44 || head[2] !== 0x33) return {};
+  return readId3(file, head);
+}
+/* FLAC: Vorbis comments, embedded picture and cue sheet (text or binary) */
+async function readFlac(file) {
+  const buf = new Uint8Array(await file.slice(0, Math.min(file.size, 24e6)).arrayBuffer());
+  const dv = new DataView(buf.buffer);
+  const out = {};
+  let i = 4, rate = 44100, last = false;
+  const keys = { TITLE: 'title', ARTIST: 'artist', ALBUMARTIST: 'albumArtist', 'ALBUM ARTIST': 'albumArtist', ALBUM: 'album', TRACKNUMBER: 'track', DATE: 'year', CUESHEET: 'cue' };
+  const utf8 = new TextDecoder('utf-8');
+  while (!last && i + 4 <= buf.length) {
+    const type = buf[i] & 0x7f; last = !!(buf[i] & 0x80);
+    const len = (buf[i + 1] << 16) | (buf[i + 2] << 8) | buf[i + 3];
+    const b = i + 4;
+    if (b + len > buf.length) break;
+    if (type === 0) {
+      rate = (buf[b + 10] << 12) | (buf[b + 11] << 4) | (buf[b + 12] >> 4);
+      const total = (buf[b + 13] & 0x0f) * 2 ** 32 + dv.getUint32(b + 14);
+      if (rate) out.duration = total / rate;
+    } else if (type === 4) {
+      let j = b + 4 + dv.getUint32(b, true);
+      const count = dv.getUint32(j, true); j += 4;
+      for (let c = 0; c < count && j < b + len; c++) {
+        const l = dv.getUint32(j, true); j += 4;
+        const kv = utf8.decode(buf.subarray(j, j + l)); j += l;
+        const eq = kv.indexOf('=');
+        const k = keys[kv.slice(0, eq).toUpperCase()];
+        if (k && !out[k]) out[k] = kv.slice(eq + 1).trim();
+      }
+    } else if (type === 6 && !out.picture) {
+      let j = b + 4;
+      const ml = dv.getUint32(j); j += 4;
+      const mime = utf8.decode(buf.subarray(j, j + ml)); j += ml;
+      j += 4 + dv.getUint32(j) + 16;
+      const dl = dv.getUint32(j); j += 4;
+      out.picture = new Blob([buf.slice(j, j + dl)], { type: /^image\//.test(mime) ? mime : 'image/jpeg' });
+    } else if (type === 5) {
+      const n = buf[b + 395];
+      let j = b + 396;
+      const marks = [];
+      for (let t = 0; t < n && j + 36 <= b + len; t++) {
+        const off = dv.getUint32(j) * 2 ** 32 + dv.getUint32(j + 4);
+        const num = buf[j + 8];
+        const np = buf[j + 35];
+        let k = j + 36, idx1 = 0;
+        for (let x = 0; x < np; x++) { const io = dv.getUint32(k) * 2 ** 32 + dv.getUint32(k + 4); if (buf[k + 8] === 1) idx1 = io; k += 12; }
+        if (num >= 1 && num <= 99) marks.push({ n: num, start: (off + idx1) / rate });
+        j = k;
+      }
+      if (marks.length > 1) out.marks = marks;
+    }
+    i = b + len;
+  }
+  return out;
+}
+/* cue sheet text: album performer/title and tracks with their start time */
+function parseCue(text) {
+  const out = { performer: '', title: '', file: '', tracks: [] };
+  let cur = null;
+  const val = (l) => { const m = l.match(/^\s*\S+\s+(?:"(.*)"|(.*))\s*$/); return m ? (m[1] ?? m[2] ?? '').trim() : ''; };
+  for (const line of text.split(/\r?\n/)) {
+    const w = line.trim().split(/\s+/)[0].toUpperCase();
+    if (w === 'FILE' && !out.file) out.file = (line.match(/"(.*)"/) || [])[1] || line.trim().split(/\s+/)[1] || '';
+    else if (w === 'TRACK') { cur = { n: parseInt(line.trim().split(/\s+/)[1], 10) || out.tracks.length + 1, title: '', performer: '', start: 0 }; out.tracks.push(cur); }
+    else if (w === 'TITLE') { if (cur) cur.title = val(line); else out.title = val(line); }
+    else if (w === 'PERFORMER') { if (cur) cur.performer = val(line); else out.performer = val(line); }
+    else if (w === 'INDEX' && cur) {
+      const p = line.trim().split(/\s+/);
+      if (p[1] === '01') { const [m, sec, f] = p[2].split(':').map(Number); cur.start = m * 60 + sec + (f || 0) / 75; }
+    }
+  }
+  return out;
+}
+async function readText(f) {
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  const u = new TextDecoder('utf-8').decode(bytes);
+  if (!u.includes('\ufffd')) return u.replace(/^\ufeff/, '');
+  try { return new TextDecoder('windows-1251').decode(bytes); } catch { return u; }
+}
+
+/* reads ID3v2 tags (title, artist, album, track, cover) from the start of an MP3 */
+async function readId3(file, head) {
   const ver = head[3];
   const size = synchsafe(head, 6);
   const buf = new Uint8Array(await file.slice(10, 10 + Math.min(size, 12e6)).arrayBuffer());
@@ -269,13 +350,14 @@ const files = {
     return {
       id: 'local:' + r.key, src: 'local', title: r.title, artist: r.artist || 'Неизвестный артист', album: r.album || '', albumArtist: r.albumArtist || r.artist || 'Неизвестный артист',
       n: r.n || 0, localKey: r.key, coverKey: r.coverKey || '', art: this.covers.get(r.coverKey) || '',
+      start: r.start, end: r.end, duration: r.end ? r.end - (r.start || 0) : 0,
     };
   },
   async tracks() {
     await this.loadCovers();
     let recs = [];
     try { recs = await this.all(); } catch {}
-    return recs.sort((a, b) => b.added - a.added).map((r) => this.toTrack(r));
+    return recs.filter((r) => !r.hidden).sort((a, b) => b.added - a.added).map((r) => this.toTrack(r));
   },
   /* imports files or a whole folder: tags first, then the folder layout Artist/Album/track */
   async add(list) {
@@ -285,6 +367,17 @@ const files = {
       const dir = (f.webkitRelativePath || '').split('/').slice(0, -1).join('/');
       const pref = /cover|folder|front/i.test(f.name);
       if (!dirCover.has(dir) || pref) dirCover.set(dir, f);
+    }
+    /* cue sheets, matched to their audio file by name */
+    const cues = new Map();
+    for (const f of list) {
+      if (!/\.cue$/i.test(f.name)) continue;
+      try {
+        const c = parseCue(await readText(f));
+        const dir = (f.webkitRelativePath || '').split('/').slice(0, -1).join('/');
+        const keyOf = (name) => dir + '/' + name.replace(/\.[^.]+$/, '').toLowerCase();
+        if (c.tracks.length > 1) { cues.set(keyOf(c.file || f.name), c); cues.set(keyOf(f.name), c); }
+      } catch {}
     }
     let existing = [];
     try { existing = await this.all(); } catch {}
@@ -312,9 +405,32 @@ const files = {
         const pic = tags.picture || dirCover.get(dir);
         if (pic) { try { await this.putCover(coverKey, pic); } catch {} }
       }
-      await this.put({ key: uid(), name: f.name, size: f.size, title, artist, albumArtist, album, n: num, year: tags.year || '', coverKey, blob: f, added: Date.now() + n });
+      const cue = cues.get(dir + '/' + f.name.replace(/\.[^.]+$/, '').toLowerCase()) || (tags.cue ? parseCue(tags.cue) : null);
+      const marks = cue && cue.tracks.length > 1 ? cue.tracks : tags.marks;
+      if (marks && marks.length > 1) {
+        /* one long file with many songs: stored once, each song points at its own stretch of it */
+        const parent = uid();
+        const cArtist = (cue && cue.performer) || albumArtist;
+        const cAlbum = (cue && cue.title) || album || base;
+        const cKey = (cArtist + '|' + cAlbum).toLowerCase();
+        const various = /^(various|va\b|v\.a\.|сборник|разные)/i.test(cArtist);
+        if (!this.covers.has(cKey)) { const pic = tags.picture || dirCover.get(dir); if (pic) { try { await this.putCover(cKey, pic); } catch {} } }
+        await this.put({ key: parent, hidden: true, name: f.name, size: f.size, title: cAlbum, blob: f, added: 0 });
+        for (let m = 0; m < marks.length; m++) {
+          const tr = marks[m];
+          const end = m + 1 < marks.length ? marks[m + 1].start : tags.duration || null;
+          await this.put({
+            /* in a various-artists compilation every song goes to its own performer's folder */
+            key: uid(), parent, title: tr.title || `Трек ${tr.n}`, artist: tr.performer || cArtist, albumArtist: various && tr.performer ? tr.performer : cArtist, album: cAlbum,
+            n: tr.n || m + 1, start: tr.start, end, coverKey: cKey, added: Date.now() + n + m / 1000,
+          });
+        }
+        n += marks.length;
+      } else {
+        await this.put({ key: uid(), name: f.name, size: f.size, title, artist, albumArtist, album, n: num, year: tags.year || '', coverKey, blob: f, added: Date.now() + n });
+        n++;
+      }
       seen.add(f.name + '|' + f.size);
-      n++;
       if (n % 15 === 0) toast(`Импорт: ${n} из ${audioFiles.length}`);
     }
     return n;
@@ -528,93 +644,17 @@ const deezer = {
   },
 };
 
-/* Full versions of label songs: the official YouTube video, found through the open
-   MusicBrainz and Wikidata databases (no keys), played in YouTube's own embedded player. */
-const full = {
-  jobs: [],
-  busy: false,
-  last: 0,
-  /* MusicBrainz allows one request per second; the song you tapped goes to the front of the line */
-  mb(path, urgent) {
-    return new Promise((res, rej) => {
-      const job = { path, res, rej };
-      if (urgent) this.jobs.unshift(job); else this.jobs.push(job);
-      this.pump();
-    });
-  },
-  async pump() {
-    if (this.busy) return;
-    this.busy = true;
-    while (this.jobs.length) {
-      const job = this.jobs.shift();
-      const wait = this.last + 1100 - Date.now();
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      this.last = Date.now();
-      getJSONOnce(`https://musicbrainz.org/ws/2/${job.path}${job.path.includes('?') ? '&' : '?'}fmt=json`, 12000).then(job.res, job.rej);
-    }
-    this.busy = false;
-  },
-  ytFrom(rels) { for (const r of rels || []) { const id = r.url && yt.parse(r.url.resource); if (id) return id; } return ''; },
-  clean(t) { return String(t).replace(/\s*[([](feat|ft|with|prod)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').trim(); },
-  async wikidata(title, artist) {
-    const q = (x) => x.replace(/["\\]/g, '');
-    const sparql = `SELECT ?yt WHERE { ?s wdt:P1651 ?yt; wdt:P175 ?p; rdfs:label ?l. { ?p rdfs:label "${q(artist)}"@en } UNION { ?p skos:altLabel "${q(artist)}"@en } FILTER(LCASE(STR(?l)) = "${q(title.toLowerCase())}") } LIMIT 1`;
-    const d = await getJSONOnce('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(sparql), 12000);
-    const b = d.results.bindings[0];
-    return b ? b.yt.value : '';
-  },
-  on() { return lib.settings.full !== false; },
-  find(t, urgent) {
-    const u = !!urgent;
-    return cached('full:' + t.dzId, async () => {
-      const x = await deezer.get(`track/${t.dzId}`);
-      t.url = x.preview; t.at = Date.now();
-      if (x.isrc) {
-        const d = await this.mb(`isrc/${x.isrc}?inc=url-rels`, u).catch(() => null);
-        for (const r of (d && d.recordings) || []) { const id = this.ytFrom(r.relations); if (id) return id; }
-      }
-      const title = this.clean(x.title_short || t.title), artist = x.artist ? x.artist.name : t.artist;
-      const w = await this.wikidata(title, artist).catch(() => '');
-      if (w) return w;
-      const s = await this.mb(`recording?query=${encodeURIComponent(`recording:"${title}" AND artist:"${artist}"`)}&limit=4`, u).catch(() => null);
-      for (const r of ((s && s.recordings) || []).slice(0, 3)) {
-        const d = await this.mb(`recording/${r.id}?inc=url-rels`, u).catch(() => null);
-        const id = d && this.ytFrom(d.relations);
-        if (id) return id;
-      }
-      return '';
-    }, 30 * 24 * 3600e3);
-  },
-  /* look up the next songs ahead of time so they start without waiting */
-  warm(list) { if (this.on()) setTimeout(() => list.filter((t) => t.src === 'deezer').slice(0, 3).forEach((t) => this.find(t).catch(() => {})), 1500); },
-};
-const isVideo = (t) => !!t && (t.src === 'youtube' || !!t.full);
-
-const yt = {
-  parse(s) {
-    const m = String(s).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/|music\.youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/);
-    return m && m[1];
-  },
-  async track(id) {
-    let title = 'Видео YouTube', artist = 'YouTube';
-    try {
-      const d = await getJSON('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id), 8000);
-      title = d.title || title; artist = d.author_name || artist;
-    } catch {}
-    return { id: 'yt:' + id, src: 'youtube', ytId: id, title, artist, art: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` };
-  },
-};
-
 /* ======================= player ======================= */
 const audio = $('#audio');
+/* a song that is one stretch of a longer file (cue sheet): start and end in seconds */
+let seg = null;
 audio.volume = store.get('volume', 1);
 const P = {
-  queue: store.get('queue', []),
+  queue: store.get('queue', []).filter((t) => t.src !== 'youtube'),
   idx: store.get('idx', -1),
   shuffle: store.get('shuffle', false),
   repeat: store.get('repeat', 'off'),
   errors: 0,
-  ytState: -1,
   get cur() { return this.queue[this.idx]; },
   persist() { store.set('queue', this.queue.map(slim)); store.set('idx', this.idx); },
   setQueue(list, i = 0) {
@@ -631,29 +671,26 @@ const P = {
     this.idx = i;
     this.persist();
     lib.pushRecent(t);
-    stopYT();
-    t.full = false;
-    if (t.src === 'deezer' && full.on()) {
-      const known = full.find(t, true);
-      if (known.v === undefined) { renderNow(); toast('Ищу полную версию…'); }
-      const id = await known.catch(() => '');
-      if (this.queue[this.idx] !== t) return;
-      if (id) { t.ytId = id; t.full = true; }
-      else toast('Полная версия есть только на YouTube: кнопка в плеере');
-      full.warm(this.queue.slice(this.idx + 1, this.idx + 3));
-    }
-    if (isVideo(t)) {
-      audio.pause(); audio.removeAttribute('src'); audio.load();
-      startYT(t.ytId); renderNow(); return;
-    }
     let url = t.url;
+    seg = null;
     if (t.src === 'local') {
       const rec = await files.get(t.localKey).catch(() => null);
-      if (!rec) { toast('Файл не найден на этом устройстве'); return this.skipAfterError(); }
+      const base = rec && rec.parent ? await files.get(rec.parent).catch(() => null) : rec;
+      if (!rec || !base) { toast('Файл не найден на этом устройстве'); return this.skipAfterError(); }
+      if (rec.parent) seg = { start: rec.start || 0, end: rec.end || 0 };
+      if (audio.dataset.blobKey === base.key && audio.getAttribute('src')) {
+        /* same long file: just jump to the song */
+        renderNow();
+        if (seg) audio.currentTime = seg.start;
+        audio.play().catch(() => {});
+        return;
+      }
       if (audio.dataset.blobUrl) URL.revokeObjectURL(audio.dataset.blobUrl);
-      url = URL.createObjectURL(rec.blob);
+      url = URL.createObjectURL(base.blob);
       audio.dataset.blobUrl = url;
-    }
+      audio.dataset.blobKey = base.key;
+      if (seg) { const s0 = seg.start; audio.addEventListener('loadedmetadata', () => { audio.currentTime = s0; }, { once: true }); }
+    } else delete audio.dataset.blobKey;
     if (t.src === 'radio') radio.click(t.uuid);
     if (t.src === 'deezer') {
       try { url = await deezer.fresh(t); } catch { toast('Превью недоступно'); return this.skipAfterError(); }
@@ -666,7 +703,6 @@ const P = {
   toggle() {
     const t = this.cur;
     if (!t) return;
-    if (isVideo(t)) { if (!ytFrame) startYT(t.ytId); else ytCmd(this.ytState === 1 ? 'pauseVideo' : 'playVideo'); return; }
     if (!audio.getAttribute('src')) return this.play(this.idx);
     if (audio.paused) audio.play().catch(() => {}); else audio.pause();
   },
@@ -678,7 +714,8 @@ const P = {
     audio.pause(); renderPlayState();
   },
   prev() {
-    if (this.cur && !isVideo(this.cur) && audio.currentTime > 3) { audio.currentTime = 0; return; }
+    if (seg && audio.currentTime - seg.start > 3) { audio.currentTime = seg.start; return; }
+    if (this.cur && audio.currentTime > 3) { audio.currentTime = 0; return; }
     this.play(this.idx > 0 ? this.idx - 1 : this.queue.length - 1);
   },
   skipAfterError() {
@@ -689,7 +726,7 @@ const P = {
   get playing() {
     const t = this.cur;
     if (!t) return false;
-    return isVideo(t) ? this.ytState === 1 || this.ytState === 3 : !audio.paused;
+    return !audio.paused;
   },
 };
 function shuffled(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
@@ -703,12 +740,15 @@ nextAudio.preload = 'auto';
 nextAudio.muted = true;
 function preloadNext() {
   const n = P.queue[P.idx + 1];
-  if (!n || !n.url || n.live || n.src === 'local' || n.src === 'youtube' || n.src === 'deezer' || nextAudio.dataset.id === n.id) return;
+  if (!n || !n.url || n.live || n.src === 'local' || n.src === 'deezer' || nextAudio.dataset.id === n.id) return;
   nextAudio.dataset.id = n.id;
   nextAudio.src = n.url;
 }
 audio.addEventListener('ended', () => P.next(true));
-audio.addEventListener('timeupdate', renderTime);
+audio.addEventListener('timeupdate', () => {
+  if (seg && seg.end && audio.currentTime >= seg.end - 0.15) { P.next(true); return; }
+  renderTime();
+});
 audio.addEventListener('durationchange', renderTime);
 audio.addEventListener('error', () => {
   const t = P.cur;
@@ -717,46 +757,6 @@ audio.addEventListener('error', () => {
   toast('Трек недоступен, включаю следующий');
   P.skipAfterError();
 });
-
-/* ---------- YouTube: official embedded player, the video stays on screen ---------- */
-let ytFrame = null;
-const ytBox = document.createElement('div');
-ytBox.style.cssText = 'position:fixed;overflow:hidden;background:#000;display:none;';
-document.body.appendChild(ytBox);
-function startYT(id) {
-  P.ytState = -1;
-  ytBox.innerHTML = `<iframe src="https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&enablejsapi=1&rel=0&origin=${encodeURIComponent(location.origin)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen title="YouTube" style="width:100%;height:100%;border:0"></iframe>`;
-  ytFrame = ytBox.firstChild;
-  ytFrame.addEventListener('load', () => ytPost({ event: 'listening', id: 1, channel: 'widget' }));
-  ytBox.style.display = 'block';
-  placeYT();
-}
-function stopYT() { if (ytFrame) { ytBox.innerHTML = ''; ytFrame = null; } ytBox.style.display = 'none'; P.ytState = -1; }
-function ytPost(o) { try { ytFrame && ytFrame.contentWindow.postMessage(JSON.stringify(o), '*'); } catch {} }
-function ytCmd(func, args = []) { ytPost({ event: 'command', func, args }); }
-window.addEventListener('message', (e) => {
-  if (!ytFrame || e.source !== ytFrame.contentWindow) return;
-  let d; try { d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch { return; }
-  if (d && d.event === 'onError' && P.cur && P.cur.full) {
-    const t = P.cur;
-    t.full = false; stopYT();
-    if (t.dzId) { disk.write('full:' + t.dzId, ''); memo.set('full:' + t.dzId, ready('')); }
-    toast('Лейбл запретил показ здесь. Полностью — кнопкой «YouTube» в плеере');
-    deezer.fresh(t).then((u) => { audio.src = u; renderNow(); audio.play().catch(() => {}); }).catch(() => P.skipAfterError());
-    return;
-  }
-  const st = d && d.info && typeof d.info === 'object' ? d.info.playerState : d && d.event === 'onStateChange' ? d.info : undefined;
-  if (typeof st === 'number' && st !== P.ytState) { P.ytState = st; renderPlayState(); if (st === 0) P.next(true); }
-});
-function placeYT() {
-  if (!ytFrame) return;
-  const open = !$('#player').hidden;
-  const r = (open ? $('#stage') : $('#miniArt').parentElement).getBoundingClientRect();
-  if (!r.width) { ytBox.style.display = 'none'; return; }
-  Object.assign(ytBox.style, { display: 'block', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px', zIndex: open ? 45 : 21, borderRadius: open ? '12px' : '6px' });
-}
-window.addEventListener('resize', placeYT);
-$('#player').addEventListener('scroll', placeYT, { passive: true });
 
 /* ---------- lock screen / headphones ---------- */
 function setSession(t) {
@@ -774,7 +774,7 @@ if ('mediaSession' in navigator) {
   h('pause', () => P.toggle());
   h('nexttrack', () => P.next());
   h('previoustrack', () => P.prev());
-  h('seekto', (d) => { if (P.cur && !P.cur.live && d.seekTime != null) audio.currentTime = d.seekTime; });
+  h('seekto', (d) => { if (P.cur && !P.cur.live && d.seekTime != null) audio.currentTime = (seg ? seg.start : 0) + d.seekTime; });
 }
 
 /* ---------- player UI ---------- */
@@ -793,37 +793,34 @@ function renderNow() {
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
   $('#playerBg').style.backgroundImage = `url("${art.replace(/"/g, '%22')}")`;
-  const video = isVideo(t);
-  $('#stage').classList.toggle('video', video);
-  $('#bigArt').hidden = video;
+
   $('#seek').classList.toggle('disabled', !!t.live);
   $('#tLive').hidden = !t.live;
   $('#tCur').style.visibility = $('#tDur').style.visibility = t.live ? 'hidden' : '';
-  $('#seekWrap').hidden = video;
-  const yf = $('#ytFull');
-  yf.hidden = !(t.preview && !t.full);
-  if (!yf.hidden) yf.href = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(`${t.artist} ${t.title}`);
   refreshLike();
   setSession(t);
   renderPlayState();
   renderTime();
   renderQueue();
   markPlaying();
-  requestAnimationFrame(placeYT);
 }
 function renderPlayState() {
   const on = P.playing;
   for (const b of [$('#play'), $('#miniPlay')]) { b.innerHTML = on ? I.pause : I.play; b.setAttribute('aria-label', on ? 'Пауза' : 'Играть'); }
-  $('#stage').classList.toggle('paused', !on && !isVideo(P.cur));
+  $('#stage').classList.toggle('paused', !on);
   document.body.classList.toggle('is-paused', !on);
   try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = on ? 'playing' : 'paused'; } catch {}
   $('#shuffle').classList.toggle('on', P.shuffle);
   $('#repeat').classList.toggle('on', P.repeat !== 'off');
   $('#repeat').classList.toggle('one', P.repeat === 'one');
-  requestAnimationFrame(placeYT);
 }
 let seekRatio = null;
-const seekDur = () => (isFinite(audio.duration) && audio.duration ? audio.duration : (P.cur && P.cur.duration) || 0);
+const segStart = () => (seg ? seg.start : 0);
+const seekDur = () => {
+  const full = isFinite(audio.duration) && audio.duration ? audio.duration : 0;
+  if (seg) return (seg.end || full) - seg.start;
+  return full || (P.cur && P.cur.duration) || 0;
+};
 function setSeek(r) {
   $('#seekFill').style.transform = `scaleX(${r})`;
   $('#seek').setAttribute('aria-valuenow', Math.round(r * 100));
@@ -831,8 +828,8 @@ function setSeek(r) {
 function renderTime() {
   const t = P.cur;
   if (!t || t.live) { $('#miniBar').style.width = '0'; return; }
-  const d = isFinite(audio.duration) ? audio.duration : t.duration || 0;
-  const c = audio.currentTime || 0;
+  const d = seekDur();
+  const c = Math.max(0, (audio.currentTime || 0) - segStart());
   const p = d ? Math.min(100, (c / d) * 100) : 0;
   $('#miniBar').style.width = p + '%';
   if (seekRatio != null) return;
@@ -897,7 +894,7 @@ seekEl.addEventListener('pointermove', (e) => { if (seekRatio != null) seekAt(e)
 const seekEnd = () => {
   if (seekRatio == null) return;
   const d = seekDur();
-  if (d) audio.currentTime = seekRatio * d;
+  if (d) audio.currentTime = segStart() + seekRatio * d;
   seekRatio = null;
   seekEl.classList.remove('active');
   renderTime();
@@ -908,7 +905,7 @@ seekEl.addEventListener('lostpointercapture', seekEnd);
 seekEl.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
   e.preventDefault();
-  if (seekDur()) audio.currentTime = Math.min(seekDur(), Math.max(0, audio.currentTime + (e.key === 'ArrowRight' ? 5 : -5)));
+  if (seekDur()) audio.currentTime = Math.min(segStart() + seekDur(), Math.max(segStart(), audio.currentTime + (e.key === 'ArrowRight' ? 5 : -5)));
 });
 const vol = $('#volume');
 vol.value = Math.round(audio.volume * 100); vol.style.setProperty('--p', vol.value + '%');
@@ -930,23 +927,18 @@ function openPlayer() {
   playerEl.hidden = false;
   document.documentElement.style.overflow = 'hidden';
   renderQueue();
-  requestAnimationFrame(placeYT);
-  setTimeout(placeYT, 400);
 }
 function hidePlayer() {
   playerEl.hidden = true;
   playerEl.style.transition = ''; playerEl.style.transform = '';
-  ytBox.style.transform = ''; ytBox.style.transition = '';
   document.documentElement.style.overflow = '';
-  requestAnimationFrame(placeYT);
 }
 function closePlayer(animate = true) {
   if (playerEl.hidden) return;
   if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return hidePlayer();
   const ease = 'transform .32s cubic-bezier(.25,.8,.3,1)';
-  playerEl.style.transition = ease; ytBox.style.transition = ease;
+  playerEl.style.transition = ease;
   playerEl.style.transform = 'translate3d(0,100%,0)';
-  ytBox.style.transform = `translate3d(0,${innerHeight}px,0)`;
   let done = false;
   const fin = () => { if (!done) { done = true; hidePlayer(); } };
   playerEl.addEventListener('transitionend', fin, { once: true });
@@ -967,7 +959,6 @@ playerEl.addEventListener('touchmove', (e) => {
   drag.dy = Math.max(0, dy);
   const tf = `translate3d(0,${drag.dy}px,0)`;
   playerEl.style.transition = 'none'; playerEl.style.transform = tf;
-  ytBox.style.transition = 'none'; ytBox.style.transform = tf;
 }, { passive: false });
 playerEl.addEventListener('touchend', () => {
   if (!drag) return;
@@ -977,7 +968,6 @@ playerEl.addEventListener('touchend', () => {
   if (dy > 140 || (dy > 30 && v > 0.5)) return closePlayer();
   const back = 'transform .3s cubic-bezier(.25,.8,.3,1)';
   playerEl.style.transition = back; playerEl.style.transform = '';
-  ytBox.style.transition = back; ytBox.style.transform = '';
 });
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input, textarea')) return;
@@ -1029,8 +1019,6 @@ function trackSheet(t, { playlistId, q, fileView } = {}) {
   if (t.src === 'local') l.push({ label: 'Открыть папку артиста', icon: I.folder, fn: () => { closePlayer(); go('#mine-artist/' + encodeURIComponent(t.albumArtist || t.artist)); } });
   if (t.dzArtist) l.push({ label: 'Перейти к артисту', icon: I.person, fn: () => { closePlayer(); go('#dz/' + t.dzArtist); } });
   if (t.dzAlbum) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#dza/' + t.dzAlbum); } });
-  if (t.preview) l.push({ label: 'Слушать полностью на YouTube', icon: I.yt, fn: () => window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(`${t.artist} ${t.title}`), '_blank', 'noopener') });
-  if (t.src === 'youtube') l.push({ label: 'Открыть на YouTube', icon: I.yt, fn: () => window.open('https://www.youtube.com/watch?v=' + t.ytId, '_blank', 'noopener') });
   if (playlistId) l.push({ label: 'Удалить из плейлиста', icon: I.trash, danger: true, fn: () => { const p = lib.playlists.find((x) => x.id === playlistId); if (p) { p.tracks = p.tracks.filter((x) => x.id !== t.id); lib.save('playlists'); route(); } } });
   if (fileView) l.push({ label: 'Удалить файл', icon: I.trash, danger: true, fn: async () => { await files.del(t.localKey); toast('Файл удалён'); route(); } });
   openSheet(sheetTitle(t), acts(l));
@@ -1069,7 +1057,7 @@ function row(t, i, key, o = {}) {
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
     : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span>`;
-  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : t.preview ? '<span class="tag">30 с</span>' : '') + esc(t.artist || '');
+  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.preview ? '<span class="tag">30 с</span>' : '') + esc(t.artist || '');
   const dur = !o.noDur && !t.live && t.duration ? fmt(t.duration) : '';
   const q = o.q != null ? ` data-q="${o.q}"` : '';
   return `<li class="row" data-id="${esc(t.id)}"><button class="hit" data-play="${key}" data-i="${i}"${q}>${lead}<span class="meta"><b>${esc(t.title)}</b>${sub ? `<small>${sub}</small>` : ''}</span></button><span class="tail">${o.showDur ? dur : ''}<button class="dots" data-more="${key}" data-i="${i}"${q} aria-label="Действия">${I.more}</button></span></li>`;
@@ -1476,9 +1464,7 @@ const views = {
       let h = `<div class="artist-head"><img class="cover" src="${esc(a.avatarBig || a.avatar)}" alt="" referrerpolicy="no-referrer"><a class="back" href="#" data-back>${I.back}</a>
         <div class="who"><div><h1>${esc(a.name)}</h1><p>${a.fans ? fmtCount(a.fans) + ' поклонников · ' : ''}официальный каталог</p></div></div></div>`;
       h += a.top.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` : '';
-      h += `<p class="note">${full.on() ? 'Полные версии играют в официальном плеере YouTube, с видео на экране. Если видео не нашлось, играет официальное превью 30 секунд.' : 'Официальные превью по 30 секунд. Полные версии можно включить в «Источниках».'}</p>`;
       if (a.top.length) h += section('Популярные треки', rows(a.top.slice(0, 10), { key: k }));
-      full.warm(a.top);
       if (a.albums.length) h += section('Альбомы', shelf(a.albums.map(card).join('')));
       if (a.singles.length) h += section('Синглы и EP', shelf(a.singles.map(card).join('')));
       if (a.related.length) h += section('Похожие артисты', shelf(a.related.map(card).join(''), 'small'));
@@ -1496,8 +1482,7 @@ const views = {
         <h1>${esc(a.title)}</h1><a class="by" href="#dz/${a.dzArtist}">${esc(a.artist)}</a>
         <div class="info">${[{ album: 'Альбом', single: 'Сингл', ep: 'EP', compile: 'Сборник' }[a.type] || 'Альбом', a.year].filter(Boolean).join(' · ')}</div></div></div>` +
         (a.tracks.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` + rows(a.tracks, { key: k, numbered: true, sub: () => '' }) : '<div class="empty"><b>Превью недоступны</b></div>') +
-        `<p class="foot">${tracksWord(a.tracks.length)}${a.total ? ', ' + fmtLong(a.total) : ''}${a.label ? '<br>' + esc(a.label) : ''}<br>Данные Deezer${full.on() ? ' · полные версии через YouTube' : ' · превью по 30 секунд'}</p>`;
-      full.warm(a.tracks);
+        `<p class="foot">${tracksWord(a.tracks.length)}${a.total ? ', ' + fmtLong(a.total) : ''}${a.label ? '<br>' + esc(a.label) : ''}<br>Официальные превью по 30 секунд, данные Deezer</p>`;
       markPlaying();
     }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть альбом.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
@@ -1537,9 +1522,6 @@ const views = {
       <div class="group"><h3>Audius</h3><p class="note">Миллионы треков независимых артистов со всего мира: страницы артистов, альбомы, чарты по жанрам.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Internet Archive</h3><p class="note">Независимые лейблы, живые концерты, старые пластинки.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Radio Browser</h3><p class="note">Около 50 000 интернет-радиостанций из 200 стран.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>YouTube</h3><p class="note">Вставьте ссылку на видео в поиск. Видео играет в официальном плеере и остаётся на экране.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>Полные версии песен звёзд</h3><p class="note">Если официальное видео песни можно показывать в других приложениях, песня играет целиком прямо здесь, в плеере YouTube. Большинство лейблов это запрещает: тогда играет превью 30 секунд, а кнопка «Полностью на YouTube» в плеере открывает песню целиком в приложении YouTube.</p>
-        <label class="state" style="font-size:15px;color:var(--fg)"><input type="checkbox" id="fullOn" ${full.on() ? 'checked' : ''}> Играть полные версии</label></div>
       <form class="group" id="jmForm"><h3>Jamendo</h3>
         <p class="note">Ещё около 600 000 треков. Нужен бесплатный ключ: зарегистрируйтесь на <a class="text-btn" href="https://devportal.jamendo.com/" target="_blank" rel="noopener">devportal.jamendo.com</a>, создайте приложение и вставьте его Client ID.</p>
         <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(lib.settings.jamendo)}">
@@ -1553,7 +1535,6 @@ const views = {
       if (!key) return toast('Jamendo отключён');
       try { await jamendo.tracks({ limit: 1 }); toast('Jamendo подключён'); } catch { toast('Ключ не подошёл'); }
     };
-    $('#fullOn').onchange = (e) => { lib.settings.full = e.target.checked; lib.save('settings'); toast(e.target.checked ? 'Полные версии включены' : 'Будут играть превью'); };
     $('#wipe').onclick = () => { lib.recent = []; lib.searches = []; lib.save('recent'); lib.save('searches'); toast('История очищена'); };
   },
 };
@@ -1606,17 +1587,6 @@ async function doSearch(q, commit) {
     return;
   }
   if (commit || q.length > 2) lib.pushSearch(q);
-  const ytId = yt.parse(q);
-  if (ytId) {
-    $('#sTabs').hidden = true;
-    out.innerHTML = skRows(1);
-    const t = await yt.track(ytId);
-    if (seq !== searchSeq) return;
-    const k = reg([t]);
-    out.innerHTML = section('Видео YouTube', rows([t], { key: k })) + `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Смотреть</button><button class="btn" id="ytSave">${I.heart}В избранное</button></div>`;
-    $('#ytSave').onclick = () => lib.toggleLike(t);
-    return;
-  }
   const all = tab === 'all';
   const n = norm(q);
   /* starts with the query > contains it > anything else; popularity decides inside each group */
