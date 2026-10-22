@@ -94,6 +94,10 @@ main {
 .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .art.round, .art.round::after { border-radius: 50%; }
 .art.logo, .thumb.logo { background: #fff; }
+img[onload] { transition: opacity .25s ease; }
+img[onload]:not(.in) { opacity: 0; }
+.art img.sleeve-bg { filter: blur(14px) saturate(1.4); transform: scale(1.25); opacity: .9; }
+.art img.sleeve { inset: 13%; width: 74%; height: 74%; object-fit: contain; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .35)); }
 .art.logo img, .thumb.logo img { object-fit: contain; padding: 14%; }
 .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--fg-3); background: linear-gradient(160deg, var(--surface-2), var(--surface)); }
 .ph svg { width: 34%; height: 34%; max-width: 64px; }

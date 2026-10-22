@@ -122,8 +122,16 @@ const I = {
 /* artwork with a neutral placeholder underneath */
 const ph = `<div class="ph">${I.note}</div>`;
 const phPerson = `<div class="ph">${I.person}</div>`;
-function img(src, person) {
-  return (person ? phPerson : ph) + (src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : '');
+/* big: a sharper copy the browser picks on high-density screens */
+function img(src, person, big, sizes = '(min-width: 600px) 180px, 46vw') {
+  if (!src) return person ? phPerson : ph;
+  const set = big && big !== src ? ` srcset="${esc(src)} 480w, ${esc(big)} 1000w" sizes="${sizes}"` : '';
+  return (person ? phPerson : ph) + `<img src="${esc(src)}"${set} alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onload="this.classList.add('in')" onerror="this.remove()">`;
+}
+/* Internet Archive only offers small thumbnails in lists: show them as a sleeve on a blurred backdrop */
+function sleeve(src) {
+  if (!src) return ph;
+  return ph + `<img class="sleeve-bg" src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><img class="sleeve" src="${esc(src)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onload="if(this.naturalWidth>this.naturalHeight*2.2){this.previousElementSibling.remove();this.remove()}else this.classList.add('in')" onerror="this.remove()">`;
 }
 
 /* ======================= library ======================= */
@@ -341,7 +349,7 @@ const audius = {
     return {
       id: 'au:' + x.id, src: 'audius', title: x.title, artist: x.user ? x.user.name : '', artistId: x.user ? x.user.id : '',
       thumb: x.artwork ? x.artwork['150x150'] || '' : '', art: this.art(x.artwork), artBig: this.art(x.artwork, true),
-      by: x.user ? { id: x.user.id, name: x.user.name, avatar: x.user.profile_picture ? x.user.profile_picture['480x480'] || x.user.profile_picture['150x150'] : '', followers: x.user.follower_count || 0 } : null, url: `${AU}/tracks/${x.id}/stream?app_name=nota`, duration: x.duration || 0, genre: x.genre, plays: x.play_count,
+      by: x.user ? { id: x.user.id, name: x.user.name, avatar: x.user.profile_picture ? x.user.profile_picture['480x480'] || x.user.profile_picture['150x150'] : '', avatarBig: x.user.profile_picture ? x.user.profile_picture['1000x1000'] || '' : '', followers: x.user.follower_count || 0 } : null, url: `${AU}/tracks/${x.id}/stream?app_name=nota`, duration: x.duration || 0, genre: x.genre, plays: x.play_count,
     };
   },
   tracks(list) { return (list || []).filter((x) => x && x.is_streamable !== false && !x.is_stream_gated && !x.is_delete).map((x) => this.track(x)); },
@@ -349,6 +357,7 @@ const audius = {
     return {
       kind: 'artist', id: u.id, name: u.name, handle: u.handle, verified: !!u.is_verified,
       avatar: u.profile_picture ? u.profile_picture['480x480'] || u.profile_picture['1000x1000'] || u.profile_picture['150x150'] : '',
+      avatarBig: u.profile_picture ? u.profile_picture['1000x1000'] || '' : '',
       cover: u.cover_photo ? u.cover_photo['2000x'] || u.cover_photo['640x'] : '',
       followers: u.follower_count || 0, trackCount: u.track_count || 0, albumCount: u.album_count || 0, bio: u.bio || '', location: u.location || '',
     };
@@ -390,8 +399,8 @@ const archive = {
     return d.response.docs.map((x) => ({ kind: 'ia-album', id: x.identifier, title: first(x.title) || x.identifier, artist: first(x.creator), year: first(x.year), art: this.cover(x.identifier) }));
   },
   clean(t) { return t.replace(/[()":\[\]{}^~*?\\/]/g, ' ').trim(); },
-  find(text, rows) { return this.search(`(${this.clean(text)}) AND mediatype:audio AND ${MUSIC_COLLECTIONS}`, { rows }); },
-  byCreator(name) { return this.search(`creator:("${this.clean(name)}") AND mediatype:audio`, { rows: 60 }); },
+  find(text, rows) { return this.search(`(${this.clean(text)}) AND mediatype:(audio OR etree) AND ${MUSIC_COLLECTIONS}`, { rows }); },
+  byCreator(name) { return this.search(`creator:("${this.clean(name)}") AND mediatype:(audio OR etree)`, { rows: 60 }); },
   async album(id) {
     const d = await getJSON('https://archive.org/metadata/' + encodeURIComponent(id), 20000);
     if (!d || !d.metadata) throw new Error('not found');
@@ -923,13 +932,13 @@ const hrefOf = (a) => a.kind === 'artist' ? `#artist/${a.id}` : a.kind === 'au-a
 function card(a) {
   const round = a.kind === 'artist';
   const t2 = round ? (a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист') : a.artist || a.year || '';
-  return `<a class="card${round ? ' center' : ''}" href="${hrefOf(a)}"><div class="art${round ? ' round' : ''}">${img(round ? a.avatar : a.art, round)}</div><span class="t1">${esc(round ? a.name : a.title)}</span><span class="t2">${esc(t2)}</span></a>`;
+  return `<a class="card${round ? ' center' : ''}" href="${hrefOf(a)}"><div class="art${round ? ' round' : ''}">${a.kind === 'ia-album' ? sleeve(a.art) : round ? img(a.avatar, true, a.avatarBig, '(min-width: 600px) 140px, 30vw') : img(a.art, false, a.artBig)}</div><span class="t1">${esc(round ? a.name : a.title)}</span><span class="t2">${esc(t2)}</span></a>`;
 }
 function playCard(t, k, i) {
-  return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${img(t.art)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
+  return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${t.live ? img(t.art) : img(t.art, false, t.artBig)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
 }
 function feature(a, eyebrow) {
-  return `<a class="feature" href="${hrefOf(a)}"><div><div class="eyebrow">${esc(eyebrow)}</div><div class="ft">${esc(a.title)}</div><div class="fs">${esc(a.artist || '')}</div></div><div class="art">${img(a.artBig || a.art)}</div></a>`;
+  return `<a class="feature" href="${hrefOf(a)}"><div><div class="eyebrow">${esc(eyebrow)}</div><div class="ft">${esc(a.title)}</div><div class="fs">${esc(a.artist || '')}</div></div><div class="art">${img(a.art, false, a.artBig, '(min-width: 600px) 380px, 92vw')}</div></a>`;
 }
 function section(title, inner, href) {
   const h = href ? `<a href="${href}">${esc(title)}${I.chev}</a>` : esc(title);
@@ -989,7 +998,7 @@ const GENRES = [
 ];
 const genreName = (g) => (GENRES.find((x) => x[0] === g) || [g, g])[1];
 const ARCHIVE_SETS = [
-  ['etree', 'Живые концерты', 'mediatype:audio AND collection:etree'],
+  ['etree', 'Живые концерты', 'mediatype:etree AND collection:etree'],
   ['78rpm', 'Пластинки 78 об/мин', 'mediatype:audio AND collection:(78rpm OR georgeblood)'],
   ['netlabels', 'Независимые лейблы', 'mediatype:audio AND collection:netlabels'],
   ['fresh', 'Новое в архиве', 'mediatype:audio AND collection:audio_music'],
@@ -1003,7 +1012,7 @@ function artistsOf(tracks, n = 14) {
   for (const t of tracks) {
     if (!t.by || seen.has(t.by.id)) continue;
     seen.add(t.by.id);
-    out.push({ kind: 'artist', id: t.by.id, name: t.by.name, avatar: t.by.avatar, followers: t.by.followers });
+    out.push({ kind: 'artist', id: t.by.id, name: t.by.name, avatar: t.by.avatar, avatarBig: t.by.avatarBig, followers: t.by.followers });
     if (out.length >= n) break;
   }
   return out;
@@ -1045,7 +1054,7 @@ const views = {
     h += section('Андеграунд-рэп', lazy(cached('au-pl:rage', () => audius.search('playlists', 'rage', 16)), (l) => shelf(l.map(card).join(''))), '#underground');
     h += section('Радио в России', lazy(cached('radio:RU|', () => radio.search({ country: 'RU', limit: 80 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#radio');
     h += section('Популярные плейлисты', lazy(cached('au-playlists', () => audius.trendingLists('playlist')), (l) => shelf(l.map(card).join(''))));
-    for (const [key, name, q] of ARCHIVE_SETS.slice(0, 2)) h += section(name, lazy(cached('ia:' + key, () => archive.search(q, { rows: 20 })), (l) => shelf(l.map(card).join(''))), '#archive/' + key);
+    for (const [key, name, q] of ARCHIVE_SETS.slice(0, 2)) h += section(name, lazy(cached('ia2:' + key, () => archive.search(q, { rows: 20 })), (l) => shelf(l.map(card).join(''))), '#archive/' + key);
     view.innerHTML = h;
   },
 
@@ -1092,7 +1101,7 @@ const views = {
   archive(key) {
     const set = ARCHIVE_SETS.find((s) => s[0] === key) || ARCHIVE_SETS[0];
     view.innerHTML = backBtn('#browse') + `<h1 class="page-title">${esc(set[1])}</h1><p class="page-sub">Internet Archive</p>` +
-      lazy(cached('ia-all:' + set[0], () => archive.search(set[2], { rows: 60, sort: set[0] === 'fresh' ? 'publicdate desc' : 'downloads desc' })), (l) => `<div class="grid">${l.map(card).join('')}</div>`, skGrid());
+      lazy(cached('ia-all2:' + set[0], () => archive.search(set[2], { rows: 60, sort: set[0] === 'fresh' ? 'publicdate desc' : 'downloads desc' })), (l) => `<div class="grid">${l.map(card).join('')}</div>`, skGrid());
   },
 
   artist(id) {
@@ -1154,7 +1163,7 @@ const views = {
   'ia-artist'(name) {
     name = decodeURIComponent(name || '');
     view.innerHTML = backBtn() + `<h1 class="page-title">${esc(name)}</h1><p class="page-sub">Записи в Internet Archive</p>` +
-      lazy(cached('ia-creator:' + name, () => archive.byCreator(name)), (l) => l.length ? `<div class="grid">${l.map(card).join('')}</div>` : '<div class="empty"><b>Ничего не нашлось</b></div>', skGrid());
+      lazy(cached('ia-creator2:' + name, () => archive.byCreator(name)), (l) => l.length ? `<div class="grid">${l.map(card).join('')}</div>` : '<div class="empty"><b>Ничего не нашлось</b></div>', skGrid());
   },
 
   radio() {
@@ -1376,7 +1385,7 @@ function fillTileArt() {
   });
   $$('[data-archive-art]').forEach((el) => {
     const s = ARCHIVE_SETS.find((x) => x[0] === el.dataset.archiveArt);
-    cached('ia:' + s[0], () => archive.search(s[2], { rows: 20 })).then((l) => {
+    cached('ia2:' + s[0], () => archive.search(s[2], { rows: 20 })).then((l) => {
       if (l[0] && el.isConnected) el.insertAdjacentHTML('afterbegin', `<img src="${esc(l[0].art)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`);
     }).catch(() => {});
   });
@@ -1426,7 +1435,7 @@ async function doSearch(q, commit) {
   }
   if (all || tab === 'albums') {
     h += lazy(cached('s-p:' + q, () => audius.search('playlists', q, 24)), (l) => l.length ? section('Альбомы и плейлисты', all ? shelf(l.map(card).join('')) : `<div class="grid">${l.map(card).join('')}</div>`) : '', all ? skShelf(4) : skGrid(4));
-    h += lazy(cached('s-ia:' + q, () => archive.find(q, 30)), (l) => l.length ? section('Internet Archive', all ? shelf(l.map(card).join('')) : `<div class="grid">${l.map(card).join('')}</div>`) : '', '');
+    h += lazy(cached('s-ia2:' + q, () => archive.find(q, 30)), (l) => l.length ? section('Internet Archive', all ? shelf(l.map(card).join('')) : `<div class="grid">${l.map(card).join('')}</div>`) : '', '');
   }
   if (all || tab === 'radio') h += lazy(cached('s-r:' + q, () => Promise.all([radio.search({ name: q, limit: 20 }), radio.search({ tag: q.toLowerCase(), limit: 20 })]).then(([a, b]) => { const s = new Set(); return [...a, ...b].filter((t) => !s.has(t.id) && s.add(t.id)); })), (l) => l.length ? section('Радиостанции', rows(all ? l.slice(0, 5) : l)) : (all ? '' : '<div class="empty"><b>Станций не нашлось</b></div>'), all ? '' : skRows(8));
   if (seq === searchSeq) out.innerHTML = h;
@@ -1480,6 +1489,17 @@ $('#filePick').addEventListener('change', importPicked);
 $('#folderPick').addEventListener('change', importPicked);
 
 /* ======================= boot ======================= */
+/* first launch: a snapshot shipped with the app fills the screens at once; fresh data replaces it in the background */
+async function seedCache() {
+  if (disk.get('au-trend-week')) return;
+  try {
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 2000);
+    const seed = await (await fetch('seed.json', { signal: ctl.signal })).json();
+    for (const [k, d] of Object.entries(seed.data || {})) if (!disk.get(k)) { try { localStorage.setItem('nota:c:' + k, JSON.stringify({ t: 0, d })); } catch {} }
+  } catch {}
+}
+await seedCache();
 route();
 if (P.cur) renderNow(); else renderPlayState();
 setTimeout(() => rapIndex().catch(() => {}), 1500);

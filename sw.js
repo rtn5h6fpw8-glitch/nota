@@ -1,5 +1,5 @@
 // App shell is served from cache and refreshed in the background; artwork is cached after the first view.
-const CACHE = 'nota-v8';
+const CACHE = 'nota-v9';
 const IMG = 'nota-img-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
