@@ -93,6 +93,8 @@ main {
 .art::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: var(--art-edge); pointer-events: none; }
 .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .art.round, .art.round::after { border-radius: 50%; }
+.art.logo, .thumb.logo { background: #fff; }
+.art.logo img, .thumb.logo img { object-fit: contain; padding: 14%; }
 .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--fg-3); background: linear-gradient(160deg, var(--surface-2), var(--surface)); }
 .ph svg { width: 34%; height: 34%; max-width: 64px; }
 .card .t1 { margin-top: 8px; font-size: 14px; font-weight: 500; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
@@ -261,10 +263,10 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 .mini-progress i { display: block; height: 100%; width: 0; background: var(--fg-2); }
 
 /* ---------------- full player ---------------- */
-.player { position: fixed; inset: 0; z-index: 40; overflow-y: auto; overscroll-behavior: contain; color: #fff; background: #1a1a1c; animation: rise .38s cubic-bezier(.2, .85, .25, 1); }
+.player { will-change: transform; backface-visibility: hidden; position: fixed; inset: 0; z-index: 40; overflow-y: auto; overscroll-behavior: contain; color: #fff; background: #1a1a1c; animation: rise .38s cubic-bezier(.2, .85, .25, 1); }
 @keyframes rise { from { transform: translateY(100%); } }
 .player-bg { position: fixed; inset: 0; overflow: hidden; background: #1a1a1c; }
-.player-bg div { position: absolute; inset: -30%; background-size: cover; background-position: center; filter: blur(70px) saturate(1.7) brightness(.62); transition: background-image .6s; }
+.player-bg div { position: absolute; left: -10%; top: -10%; width: 30%; height: 30%; transform: scale(4); transform-origin: 0 0; background-size: cover; background-position: center; filter: blur(12px) saturate(1.7) brightness(.6); }
 .player-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, .05), rgba(0, 0, 0, .35)); }
 .player-inner {
   position: relative; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px;
@@ -275,6 +277,8 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 .stage { width: 100%; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: rgba(255, 255, 255, .08); box-shadow: 0 24px 60px rgba(0, 0, 0, .5); transition: transform .5s cubic-bezier(.3, 1.3, .4, 1), box-shadow .5s; margin-top: 10px; }
 .stage.paused { transform: scale(.8); box-shadow: 0 10px 30px rgba(0, 0, 0, .3); }
 .stage img { width: 100%; height: 100%; object-fit: cover; }
+.stage.logo { background: #fff; }
+.stage.logo img { object-fit: contain; padding: 18%; }
 .stage.video { aspect-ratio: 16 / 9; transform: none; }
 .now { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .now-text { flex: 1; min-width: 0; }

@@ -130,8 +130,8 @@ const lib = {
   pushSearch(q) { this.searches = [q, ...this.searches.filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8); this.save('searches'); },
 };
 function slim(t) {
-  const { id, src, title, artist, artistId, album, albumId, alId, art, url, duration, live, ytId, localKey, uuid } = t;
-  return { id, src, title, artist, artistId, album, albumId, alId, art, url, duration, live, ytId, localKey, uuid };
+  const { id, src, title, artist, artistId, album, albumId, alId, art, artBig, url, duration, live, ytId, localKey, uuid } = t;
+  return { id, src, title, artist, artistId, album, albumId, alId, art, artBig, url, duration, live, ytId, localKey, uuid };
 }
 
 /* ---------- own files (IndexedDB) ---------- */
@@ -187,7 +187,7 @@ const audius = {
   track(x) {
     return {
       id: 'au:' + x.id, src: 'audius', title: x.title, artist: x.user ? x.user.name : '', artistId: x.user ? x.user.id : '',
-      art: this.art(x.artwork), url: `${AU}/tracks/${x.id}/stream?app_name=nota`, duration: x.duration || 0, genre: x.genre, plays: x.play_count,
+      art: this.art(x.artwork), artBig: this.art(x.artwork, true), url: `${AU}/tracks/${x.id}/stream?app_name=nota`, duration: x.duration || 0, genre: x.genre, plays: x.play_count,
     };
   },
   tracks(list) { return (list || []).filter((x) => x && x.is_streamable !== false && !x.is_stream_gated && !x.is_delete).map((x) => this.track(x)); },
@@ -202,7 +202,7 @@ const audius = {
   list(p) {
     return {
       kind: 'au-album', id: p.id, title: p.playlist_name, artist: p.user ? p.user.name : '', artistId: p.user ? p.user.id : '',
-      art: this.art(p.artwork), isAlbum: !!p.is_album, count: p.track_count || 0, desc: p.description || '', date: p.release_date || p.created_at || '',
+      art: this.art(p.artwork), artBig: this.art(p.artwork, true), isAlbum: !!p.is_album, count: p.track_count || 0, desc: p.description || '', date: p.release_date || p.created_at || '',
     };
   },
   trending({ genre = '', time = 'week', limit = 50 } = {}) {
@@ -243,7 +243,10 @@ const archive = {
     if (!d || !d.metadata) throw new Error('not found');
     const m = d.metadata;
     const fmtOk = ['VBR MP3', 'MP3', '128Kbps MP3', '64Kbps MP3', 'Ogg Vorbis'].find((f) => d.files.some((x) => x.format === f));
-    const art = this.cover(id);
+    const pics = d.files.filter((x) => /^(JPEG|PNG|JPEG Thumb)$/.test(x.format) && !/thumb|_spectrogram|\.gif$/i.test(x.name) && x.format !== 'JPEG Thumb')
+      .sort((a, b) => (+b.size || 0) - (+a.size || 0));
+    const coverFile = pics.find((x) => /cover|front|folder/i.test(x.name)) || pics[0];
+    const art = coverFile ? `https://archive.org/download/${encodeURIComponent(id)}/${coverFile.name.split('/').map(encodeURIComponent).join('/')}` : this.cover(id);
     const title = first(m.title) || id;
     const artist = first(m.creator) || first(m.artist) || '';
     const tracks = (fmtOk ? d.files.filter((x) => x.format === fmtOk) : [])
@@ -463,10 +466,12 @@ function renderNow() {
   $('#mini').hidden = !t;
   if (!t) return;
   const art = t.art || 'icon-512.png';
+  const big = t.artBig || art;
   $('#miniTitle').textContent = t.title;
   $('#miniArtist').textContent = t.artist || '';
   $('#miniArt').src = art;
-  $('#bigArt').src = art;
+  $('#bigArt').src = big;
+  $('#stage').classList.toggle('logo', !!t.live);
   $('#bigTitle').textContent = t.title;
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId;
@@ -559,20 +564,62 @@ $('#bigArtist').onclick = () => {
   else if (t.albumId) { closePlayer(); go('#album/' + encodeURIComponent(t.albumId)); }
 };
 
+const playerEl = $('#player');
 function openPlayer() {
   if (!P.cur) return;
-  $('#player').hidden = false;
+  playerEl.style.transition = ''; playerEl.style.transform = '';
+  playerEl.hidden = false;
   document.documentElement.style.overflow = 'hidden';
   renderQueue();
   requestAnimationFrame(placeYT);
   setTimeout(placeYT, 400);
 }
-function closePlayer() { $('#player').hidden = true; document.documentElement.style.overflow = ''; requestAnimationFrame(placeYT); }
+function hidePlayer() {
+  playerEl.hidden = true;
+  playerEl.style.transition = ''; playerEl.style.transform = '';
+  ytBox.style.transform = ''; ytBox.style.transition = '';
+  document.documentElement.style.overflow = '';
+  requestAnimationFrame(placeYT);
+}
+function closePlayer(animate = true) {
+  if (playerEl.hidden) return;
+  if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return hidePlayer();
+  const ease = 'transform .32s cubic-bezier(.25,.8,.3,1)';
+  playerEl.style.transition = ease; ytBox.style.transition = ease;
+  playerEl.style.transform = 'translate3d(0,100%,0)';
+  ytBox.style.transform = `translate3d(0,${innerHeight}px,0)`;
+  let done = false;
+  const fin = () => { if (!done) { done = true; hidePlayer(); } };
+  playerEl.addEventListener('transitionend', fin, { once: true });
+  setTimeout(fin, 420);
+}
 $('#miniOpen').onclick = openPlayer;
-$('#playerClose').onclick = closePlayer;
-let touchY = null;
-$('#player').addEventListener('touchstart', (e) => { touchY = $('#player').scrollTop <= 0 && !e.target.closest('input') ? e.touches[0].clientY : null; }, { passive: true });
-$('#player').addEventListener('touchend', (e) => { if (touchY != null && e.changedTouches[0].clientY - touchY > 110) closePlayer(); touchY = null; });
+$('#playerClose').onclick = () => closePlayer();
+let drag = null;
+playerEl.addEventListener('touchstart', (e) => {
+  drag = playerEl.scrollTop <= 0 && !e.target.closest('input') ? { y0: e.touches[0].clientY, t0: performance.now(), dy: 0 } : null;
+}, { passive: true });
+playerEl.addEventListener('touchmove', (e) => {
+  if (!drag) return;
+  const dy = e.touches[0].clientY - drag.y0;
+  if (!drag.dy && dy < -6) { drag = null; return; }
+  if (!drag.dy && dy <= 0) return;
+  e.preventDefault();
+  drag.dy = Math.max(0, dy);
+  const tf = `translate3d(0,${drag.dy}px,0)`;
+  playerEl.style.transition = 'none'; playerEl.style.transform = tf;
+  ytBox.style.transition = 'none'; ytBox.style.transform = tf;
+}, { passive: false });
+playerEl.addEventListener('touchend', () => {
+  if (!drag) return;
+  const { dy, t0 } = drag;
+  drag = null;
+  const v = dy / Math.max(1, performance.now() - t0);
+  if (dy > 140 || (dy > 30 && v > 0.5)) return closePlayer();
+  const back = 'transform .3s cubic-bezier(.25,.8,.3,1)';
+  playerEl.style.transition = back; playerEl.style.transform = '';
+  ytBox.style.transition = back; ytBox.style.transform = '';
+});
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input, textarea')) return;
   if (e.code === 'Space') { e.preventDefault(); P.toggle(); }
@@ -601,7 +648,7 @@ $('#sheetBody').addEventListener('click', (e) => {
   closeSheet();
   if (a) a.fn();
 });
-const sheetTitle = (t) => `<span class="thumb${t.live ? ' round' : ''}">${img(t.art)}</span><h3>${esc(t.title)}<small>${esc(t.artist || '')}</small></h3>`;
+const sheetTitle = (t) => `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.art)}</span><h3>${esc(t.title)}<small>${esc(t.artist || '')}</small></h3>`;
 
 function trackSheet(t, { playlistId, q, fileView } = {}) {
   const l = [];
@@ -658,7 +705,7 @@ const reg = (list) => { const k = 'l' + ++ctxSeq; ctx[k] = list; return k; };
 function row(t, i, key, o = {}) {
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
-    : `<span class="thumb${t.live ? ' round' : ''}">${img(t.art)}</span>`;
+    : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.art)}</span>`;
   const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : '') + esc(t.artist || '');
   const dur = !o.noDur && !t.live && t.duration ? fmt(t.duration) : '';
   const q = o.q != null ? ` data-q="${o.q}"` : '';
@@ -676,10 +723,10 @@ function card(a) {
   return `<a class="card${round ? ' center' : ''}" href="${hrefOf(a)}"><div class="art${round ? ' round' : ''}">${img(round ? a.avatar : a.art, round)}</div><span class="t1">${esc(round ? a.name : a.title)}</span><span class="t2">${esc(t2)}</span></a>`;
 }
 function playCard(t, k, i) {
-  return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round' : ''}">${img(t.art)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
+  return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${img(t.art)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
 }
 function feature(a, eyebrow) {
-  return `<a class="feature" href="${hrefOf(a)}"><div><div class="eyebrow">${esc(eyebrow)}</div><div class="ft">${esc(a.title)}</div><div class="fs">${esc(a.artist || '')}</div></div><div class="art">${img(a.art)}</div></a>`;
+  return `<a class="feature" href="${hrefOf(a)}"><div><div class="eyebrow">${esc(eyebrow)}</div><div class="ft">${esc(a.title)}</div><div class="fs">${esc(a.artist || '')}</div></div><div class="art">${img(a.artBig || a.art)}</div></a>`;
 }
 function section(title, inner, href) {
   const h = href ? `<a href="${href}">${esc(title)}${I.chev}</a>` : esc(title);
@@ -845,7 +892,7 @@ const views = {
       const k = reg(a.tracks);
       const total = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
       const year = String(a.date).slice(0, 4);
-      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.art)}</div><div>
+      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art)}</div><div>
         <h1>${esc(a.title)}</h1>${a.artistId ? `<a class="by" href="#artist/${a.artistId}">${esc(a.artist)}</a>` : `<div class="by">${esc(a.artist)}</div>`}
         <div class="info">${[a.isAlbum ? 'Альбом' : 'Плейлист', year].filter(Boolean).join(' · ')}</div></div></div>` +
         (a.tracks.length ? playActions(k) + rows(a.tracks, { key: k, numbered: a.isAlbum, showDur: true, sub: a.isAlbum ? () => '' : null }) : '<div class="empty"><b>Нет доступных треков</b></div>') +
@@ -861,7 +908,7 @@ const views = {
       if (decodeURIComponent(location.hash.slice(7)) !== id) return;
       const k = reg(a.tracks);
       const total = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
-      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.art)}</div><div>
+      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art)}</div><div>
         <h1>${esc(a.title)}</h1>${a.artist ? `<a class="by" href="#ia-artist/${encodeURIComponent(a.artist)}">${esc(a.artist)}</a>` : ''}
         <div class="info">${['Internet Archive', a.year].filter(Boolean).join(' · ')}</div></div></div>` +
         (a.tracks.length ? playActions(k) + rows(a.tracks, { key: k, numbered: true, showDur: true, n: (t, i) => t.n || i + 1, sub: (t) => t.artist && t.artist !== a.artist ? esc(t.artist) : '' }) : '<div class="empty"><b>В этой записи нет аудио</b>Попробуйте другую.</div>') +
