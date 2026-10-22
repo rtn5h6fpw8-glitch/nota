@@ -46,11 +46,38 @@ async function getJSONOnce(url, ms) {
     return await r.json();
   } finally { clearTimeout(t); }
 }
+/* Cache: answers are kept in memory and in localStorage, so screens open instantly
+   from the last known data while a fresh copy loads in the background. */
 const memo = new Map();
+const CACHE_FRESH = 15 * 60 * 1000;
+const disk = {
+  get(k) { try { const v = localStorage.getItem('nota:c:' + k); return v ? JSON.parse(v) : null; } catch { return null; } },
+  set(k, d) {
+    const v = JSON.stringify({ t: Date.now(), d });
+    try { localStorage.setItem('nota:c:' + k, v); } catch {
+      try { Object.keys(localStorage).filter((x) => x.startsWith('nota:c:')).forEach((x) => localStorage.removeItem(x)); localStorage.setItem('nota:c:' + k, v); } catch {}
+    }
+  },
+};
+const ready = (d) => { const p = Promise.resolve(d); p.v = d; return p; };
 function cached(key, fn) {
-  if (!memo.has(key)) memo.set(key, fn().catch((e) => { memo.delete(key); throw e; }));
-  return memo.get(key);
+  if (memo.has(key)) return memo.get(key);
+  const hit = disk.get(key);
+  const load = () => fn().then((d) => { disk.set(key, d); return d; });
+  let p;
+  if (hit) {
+    p = ready(hit.d);
+    if (Date.now() - hit.t > CACHE_FRESH) load().then((d) => memo.set(key, ready(d))).catch(() => {});
+  } else {
+    p = load().then((d) => { p.v = d; return d; }, (e) => { memo.delete(key); throw e; });
+  }
+  memo.set(key, p);
+  return p;
 }
+/* map a promise, keeping its instant value when it already has one */
+function mapP(p, fn) { if (p.v !== undefined) return ready(fn(p.v)); const q = p.then(fn); q.then((d) => { q.v = d; }, () => {}); return q; }
+function allP(list) { return list.every((p) => p.v !== undefined) ? ready(list.map((p) => p.v)) : Promise.all(list); }
+function whenReady(p, ok, fail) { if (p.v !== undefined) ok(p.v); else p.then(ok, fail); }
 
 let toastTimer;
 function toast(msg) {
@@ -130,8 +157,8 @@ const lib = {
   pushSearch(q) { this.searches = [q, ...this.searches.filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8); this.save('searches'); },
 };
 function slim(t) {
-  const { id, src, title, artist, artistId, album, albumId, alId, art, artBig, url, duration, live, ytId, localKey, uuid } = t;
-  return { id, src, title, artist, artistId, album, albumId, alId, art, artBig, url, duration, live, ytId, localKey, uuid };
+  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, uuid } = t;
+  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, uuid };
 }
 
 /* ---------- own files (IndexedDB) ---------- */
@@ -187,7 +214,8 @@ const audius = {
   track(x) {
     return {
       id: 'au:' + x.id, src: 'audius', title: x.title, artist: x.user ? x.user.name : '', artistId: x.user ? x.user.id : '',
-      art: this.art(x.artwork), artBig: this.art(x.artwork, true), url: `${AU}/tracks/${x.id}/stream?app_name=nota`, duration: x.duration || 0, genre: x.genre, plays: x.play_count,
+      thumb: x.artwork ? x.artwork['150x150'] || '' : '', art: this.art(x.artwork), artBig: this.art(x.artwork, true),
+      by: x.user ? { id: x.user.id, name: x.user.name, avatar: x.user.profile_picture ? x.user.profile_picture['480x480'] || x.user.profile_picture['150x150'] : '', followers: x.user.follower_count || 0 } : null, url: `${AU}/tracks/${x.id}/stream?app_name=nota`, duration: x.duration || 0, genre: x.genre, plays: x.play_count,
     };
   },
   tracks(list) { return (list || []).filter((x) => x && x.is_streamable !== false && !x.is_stream_gated && !x.is_delete).map((x) => this.track(x)); },
@@ -397,7 +425,17 @@ function shuffled(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { c
 
 audio.addEventListener('play', renderPlayState);
 audio.addEventListener('pause', renderPlayState);
-audio.addEventListener('playing', () => { P.errors = 0; renderPlayState(); });
+audio.addEventListener('playing', () => { P.errors = 0; renderPlayState(); preloadNext(); });
+/* warm up the next track so it starts without a pause */
+const nextAudio = new Audio();
+nextAudio.preload = 'auto';
+nextAudio.muted = true;
+function preloadNext() {
+  const n = P.queue[P.idx + 1];
+  if (!n || !n.url || n.live || n.src === 'local' || n.src === 'youtube' || nextAudio.dataset.id === n.id) return;
+  nextAudio.dataset.id = n.id;
+  nextAudio.src = n.url;
+}
 audio.addEventListener('ended', () => P.next(true));
 audio.addEventListener('timeupdate', renderTime);
 audio.addEventListener('durationchange', renderTime);
@@ -686,7 +724,7 @@ $('#sheetBody').addEventListener('click', (e) => {
   closeSheet();
   if (a) a.fn();
 });
-const sheetTitle = (t) => `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.art)}</span><h3>${esc(t.title)}<small>${esc(t.artist || '')}</small></h3>`;
+const sheetTitle = (t) => `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span><h3>${esc(t.title)}<small>${esc(t.artist || '')}</small></h3>`;
 
 function trackSheet(t, { playlistId, q, fileView } = {}) {
   const l = [];
@@ -743,7 +781,7 @@ const reg = (list) => { const k = 'l' + ++ctxSeq; ctx[k] = list; return k; };
 function row(t, i, key, o = {}) {
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
-    : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.art)}</span>`;
+    : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span>`;
   const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : '') + esc(t.artist || '');
   const dur = !o.noDur && !t.live && t.duration ? fmt(t.duration) : '';
   const q = o.q != null ? ` data-q="${o.q}"` : '';
@@ -782,6 +820,7 @@ const skGrid = (n = 8) => `<div class="grid">${Array.from({ length: n }, () => s
 
 let lazySeq = 0;
 function lazy(promise, render, skel = skShelf()) {
+  if (promise.v !== undefined) return render(promise.v) || '';
   const id = 'z' + ++lazySeq;
   promise.then((d) => { const el = document.getElementById(id); if (el) { el.outerHTML = render(d) || ''; markPlaying(); } })
     .catch(() => { const el = document.getElementById(id); if (el) el.outerHTML = `<p class="err">Не удалось загрузить.<button class="text-btn" data-retry>Повторить</button></p>`; });
@@ -832,15 +871,15 @@ const RADIO_COUNTRIES = ['RU', 'UA', 'BY', 'KZ', 'US', 'GB', 'DE', 'FR', 'IT', '
 const RADIO_TAGS = [['', 'Все'], ['pop', 'Поп'], ['rock', 'Рок'], ['dance', 'Танцевальное'], ['hiphop', 'Хип-хоп'], ['jazz', 'Джаз'], ['classical', 'Классика'], ['chillout', 'Чилаут'], ['electronic', 'Электроника'], ['retro', 'Ретро'], ['news', 'Новости']];
 
 const trendingWeek = () => cached('au-trend-week', () => audius.trending({ limit: 60 }));
-const artistsFrom = (tracks, n = 14) => {
+function artistsOf(tracks, n = 14) {
   const seen = new Set(), out = [];
-  for (const t of tracks) if (t.artistId && !seen.has(t.artistId)) { seen.add(t.artistId); out.push(t.artistId); }
-  return out.slice(0, n);
-};
-async function artistsOf(tracks, n) {
-  const ids = artistsFrom(tracks, n);
-  const res = await Promise.all(ids.map((id) => cached('au-user:' + id, () => audius.artist(id)).catch(() => null)));
-  return res.filter(Boolean);
+  for (const t of tracks) {
+    if (!t.by || seen.has(t.by.id)) continue;
+    seen.add(t.by.id);
+    out.push({ kind: 'artist', id: t.by.id, name: t.by.name, avatar: t.by.avatar, followers: t.by.followers });
+    if (out.length >= n) break;
+  }
+  return out;
 }
 
 /* ======================= views ======================= */
@@ -853,7 +892,7 @@ const views = {
     h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => shelf(l.slice(0, 10).map((a) => feature(a, 'Альбом недели')).join(''), 'wide'), skShelf(3, 'wide'));
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
-    h += section('Артисты недели', lazy(trendingWeek().then((t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)));
+    h += section('Артисты недели', lazy(mapP(trendingWeek(), (t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)));
     h += section('Радио в России', lazy(cached('radio:RU|', () => radio.search({ country: 'RU', limit: 80 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#radio');
     h += section('Популярные плейлисты', lazy(cached('au-playlists', () => audius.trendingLists('playlist')), (l) => shelf(l.map(card).join(''))));
     for (const [key, name, q] of ARCHIVE_SETS.slice(0, 2)) h += section(name, lazy(cached('ia:' + key, () => archive.search(q, { rows: 20 })), (l) => shelf(l.map(card).join(''))), '#archive/' + key);
@@ -889,7 +928,7 @@ const views = {
         if (!l.length) return '<div class="empty"><b>Пока пусто</b>В этом жанре нет треков за выбранный период.</div>';
         const k = reg(l);
         return playActions(k) + section('Лучшие треки', rows(l.slice(0, 40), { key: k, showDur: true })) +
-          section('Артисты', lazy(artistsOf(l, 12), (a) => shelf(a.map(card).join(''), 'small'), skShelf(5, 'small', true)));
+          section('Артисты', shelf(artistsOf(l, 12).map(card).join(''), 'small'));
       }, skRows(10));
     $$('[data-time]', view).forEach((b) => b.onclick = () => { store.set('genreTime', b.dataset.time); views.genre(g); });
   },
@@ -902,7 +941,7 @@ const views = {
 
   artist(id) {
     view.innerHTML = `<div class="artist-head"><a class="back" href="#" data-back>${I.back}</a></div>` + skRows(5);
-    Promise.all([cached('au-user:' + id, () => audius.artist(id)), cached('au-utracks:' + id, () => audius.artistTracks(id))]).then(([a, tracks]) => {
+    whenReady(allP([cached('au-user:' + id, () => audius.artist(id)), cached('au-utracks:' + id, () => audius.artistTracks(id))]), ([a, tracks]) => {
       if (location.hash !== '#artist/' + id) return;
       const k = reg(tracks);
       const following = lib.isFollowing(a.id);
@@ -920,12 +959,12 @@ const views = {
       const fb = $('#followBtn');
       if (fb) fb.onclick = () => { lib.toggleArtist(a); const on = lib.isFollowing(a.id); fb.innerHTML = on ? I.following + 'В медиатеке' : I.follow + 'Подписаться'; };
       markPlaying();
-    }).catch(() => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть артиста.<button class="text-btn" data-retry>Повторить</button></p>`; });
+    }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть артиста.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
 
   al(id) {
     view.innerHTML = backBtn() + `<div class="hero"><div class="art sk"></div></div>` + skRows(6);
-    cached('au-al:' + id, () => audius.album(id)).then((a) => {
+    whenReady(cached('au-al:' + id, () => audius.album(id)), (a) => {
       if (location.hash !== '#al/' + id) return;
       const k = reg(a.tracks);
       const total = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
@@ -936,13 +975,13 @@ const views = {
         (a.tracks.length ? playActions(k) + rows(a.tracks, { key: k, numbered: a.isAlbum, showDur: true, sub: a.isAlbum ? () => '' : null }) : '<div class="empty"><b>Нет доступных треков</b></div>') +
         `<p class="foot">${tracksWord(a.tracks.length)}${total ? ', ' + fmtLong(total) : ''}</p>` + (a.desc ? `<p class="desc">${esc(a.desc)}</p>` : '');
       markPlaying();
-    }).catch(() => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть альбом.<button class="text-btn" data-retry>Повторить</button></p>`; });
+    }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть альбом.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
 
   album(id) {
     id = decodeURIComponent(id || '');
     view.innerHTML = backBtn() + `<div class="hero"><div class="art sk"></div></div>` + skRows(6);
-    cached('ia-album:' + id, () => archive.album(id)).then((a) => {
+    whenReady(cached('ia-album:' + id, () => archive.album(id)), (a) => {
       if (decodeURIComponent(location.hash.slice(7)) !== id) return;
       const k = reg(a.tracks);
       const total = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
@@ -953,7 +992,7 @@ const views = {
         `<p class="foot">${tracksWord(a.tracks.length)}${total ? ', ' + fmtLong(total) : ''}<br><a class="text-btn" href="https://archive.org/details/${encodeURIComponent(a.id)}" target="_blank" rel="noopener">Страница в Internet Archive</a></p>` +
         (a.desc ? `<p class="desc">${esc(a.desc)}</p>` : '');
       markPlaying();
-    }).catch(() => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть запись.<button class="text-btn" data-retry>Повторить</button></p>`; });
+    }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть запись.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
 
   'ia-artist'(name) {
@@ -1156,6 +1195,16 @@ async function doSearch(q, commit) {
   if (seq === searchSeq) out.innerHTML = h;
 }
 
+/* start loading a page's data the moment a finger touches its link */
+function prefetch(h) {
+  const [name, ...rest] = h.slice(1).split('/');
+  const arg = rest.join('/');
+  if (name === 'al') cached('au-al:' + arg, () => audius.album(arg)).catch(() => {});
+  else if (name === 'artist') { cached('au-user:' + arg, () => audius.artist(arg)).catch(() => {}); cached('au-utracks:' + arg, () => audius.artistTracks(arg)).catch(() => {}); }
+  else if (name === 'album') { const id = decodeURIComponent(arg); cached('ia-album:' + id, () => archive.album(id)).catch(() => {}); }
+}
+document.addEventListener('pointerdown', (e) => { const a = e.target.closest('a[href^="#"]'); if (a) prefetch(a.getAttribute('href')); }, { passive: true });
+
 /* ======================= router ======================= */
 function route() {
   const h = location.hash.slice(1) || 'home';
@@ -1171,6 +1220,16 @@ function route() {
   markPlaying();
 }
 window.addEventListener('hashchange', route);
+/* when the screen settles, quietly load the first albums and artists it links to */
+let idleTimer;
+function prefetchVisible() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    const links = [...new Set($$('#view a[href^="#al/"], #view a[href^="#artist/"], #view a[href^="#album/"]').map((a) => a.getAttribute('href')))].slice(0, 8);
+    links.forEach((h, i) => setTimeout(() => prefetch(h), i * 250));
+  }, 2500);
+}
+new MutationObserver(prefetchVisible).observe(view, { childList: true, subtree: true });
 
 $('#filePick').addEventListener('change', async (e) => {
   const list = [...e.target.files];
