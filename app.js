@@ -111,6 +111,7 @@ const I = {
   x: '<svg viewBox="0 0 24 24"><path d="M5.6 4.2 12 10.6l6.4-6.4 1.4 1.4-6.4 6.4 6.4 6.4-1.4 1.4-6.4-6.4-6.4 6.4-1.4-1.4 6.4-6.4-6.4-6.4z"/></svg>',
   yt: '<svg viewBox="0 0 24 24"><path d="M21.6 7.2a2.5 2.5 0 0 0-1.8-1.8C18.2 5 12 5 12 5s-6.2 0-7.8.4A2.5 2.5 0 0 0 2.4 7.2 26 26 0 0 0 2 12a26 26 0 0 0 .4 4.8 2.5 2.5 0 0 0 1.8 1.8C5.8 19 12 19 12 19s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8A26 26 0 0 0 22 12a26 26 0 0 0-.4-4.8zM10 15V9l5.2 3z"/></svg>',
   edit: '<svg viewBox="0 0 24 24"><path d="M4 17.2V20h2.8l8.3-8.3-2.8-2.8zM19.7 7.1a1 1 0 0 0 0-1.4l-1.4-1.4a1 1 0 0 0-1.4 0l-1.6 1.6 2.8 2.8z"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4.2l2 2.2h6.8A2.5 2.5 0 0 1 21 8.7v8.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>',
   note: '<svg viewBox="0 0 24 24"><path d="M19 3v12.5a3.5 3.5 0 1 1-2-3.2V7.2l-8 1.9v8.4a3.5 3.5 0 1 1-2-3.2V5.5z"/></svg>',
   globe: '<svg viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 1 1 0 19 9.5 9.5 0 0 1 0-19zm-1.4 2.1A7.5 7.5 0 0 0 4.6 11h3.2c.1-2.3.9-4.6 2.8-6.4zm2.8 0c1.9 1.8 2.7 4.1 2.8 6.4h3.2a7.5 7.5 0 0 0-6-6.4zM12 5.2C10.6 6.8 9.9 8.8 9.8 11h4.4c-.1-2.2-.8-4.2-2.2-5.8zM4.6 13a7.5 7.5 0 0 0 6 6.4c-1.9-1.8-2.7-4.1-2.8-6.4zm5.2 0c.1 2.2.8 4.2 2.2 5.8 1.4-1.6 2.1-3.6 2.2-5.8zm6.4 0c-.1 2.3-.9 4.6-2.8 6.4a7.5 7.5 0 0 0 6-6.4z"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M12 1.8 14.6 4l3.4-.2.8 3.3 2.9 1.8-1.3 3.1 1.3 3.1-2.9 1.8-.8 3.3-3.4-.2L12 22.2 9.4 20l-3.4.2-.8-3.3-2.9-1.8L3.6 12l-1.3-3.1 2.9-1.8.8-3.3 3.4.2zm-1.2 13.1L7.9 12l-1.3 1.3 4.2 4.2 7-7-1.3-1.3z"/></svg>',
@@ -157,49 +158,174 @@ const lib = {
   pushSearch(q) { this.searches = [q, ...this.searches.filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8); this.save('searches'); },
 };
 function slim(t) {
-  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, uuid } = t;
-  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, uuid };
+  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid } = t;
+  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid };
 }
 
-/* ---------- own files (IndexedDB) ---------- */
+/* ---------- own music (IndexedDB): files, tags and album covers ---------- */
+function synchsafe(b, o) { return ((b[o] & 0x7f) << 21) | ((b[o + 1] & 0x7f) << 14) | ((b[o + 2] & 0x7f) << 7) | (b[o + 3] & 0x7f); }
+function decodeText(enc, bytes) {
+  let label = 'utf-8';
+  if (enc === 0) label = 'latin1';
+  else if (enc === 1) label = bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : 'utf-16le';
+  else if (enc === 2) label = 'utf-16be';
+  try { return new TextDecoder(label).decode(bytes).replace(/^﻿/, '').replace(/\0+/g, ' ').trim(); } catch { return ''; }
+}
+function id3Picture(d, v22) {
+  const enc = d[0];
+  let j, mime;
+  if (v22) { mime = 'image/' + String.fromCharCode(d[1], d[2], d[3]).toLowerCase().replace('jpg', 'jpeg'); j = 4; }
+  else { const e = d.indexOf(0, 1); mime = decodeText(0, d.subarray(1, e)); j = e + 1; }
+  j += 1;
+  if (enc === 1 || enc === 2) { while (j + 1 < d.length && !(d[j] === 0 && d[j + 1] === 0)) j += 2; j += 2; }
+  else { while (j < d.length && d[j] !== 0) j++; j++; }
+  if (!/^image\//.test(mime)) mime = 'image/jpeg';
+  return j < d.length ? new Blob([d.slice(j)], { type: mime }) : null;
+}
+/* reads ID3v2 tags (title, artist, album, track, cover) from the start of an MP3 */
+async function readTags(file) {
+  const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+  if (head[0] !== 0x49 || head[1] !== 0x44 || head[2] !== 0x33) return {};
+  const ver = head[3];
+  const size = synchsafe(head, 6);
+  const buf = new Uint8Array(await file.slice(10, 10 + Math.min(size, 12e6)).arrayBuffer());
+  const dv = new DataView(buf.buffer);
+  const out = {};
+  let i = 0;
+  if (head[5] & 0x40 && ver > 2) i = ver === 4 ? synchsafe(buf, 0) : dv.getUint32(0) + 4;
+  const idLen = ver === 2 ? 3 : 4, hdr = ver === 2 ? 6 : 10;
+  const keys = { TIT2: 'title', TT2: 'title', TPE1: 'artist', TP1: 'artist', TPE2: 'albumArtist', TP2: 'albumArtist', TALB: 'album', TAL: 'album', TRCK: 'track', TRK: 'track', TYER: 'year', TYE: 'year', TDRC: 'year' };
+  while (i + hdr <= buf.length) {
+    const id = String.fromCharCode(...buf.subarray(i, i + idLen));
+    if (!/^[A-Z0-9]{3,4}$/.test(id)) break;
+    const sz = ver === 2 ? (buf[i + 3] << 16) | (buf[i + 4] << 8) | buf[i + 5] : ver === 4 ? synchsafe(buf, i + 4) : dv.getUint32(i + 4);
+    if (!sz || i + hdr + sz > buf.length) break;
+    const data = buf.subarray(i + hdr, i + hdr + sz);
+    i += hdr + sz;
+    if (keys[id]) out[keys[id]] = decodeText(data[0], data.subarray(1));
+    else if ((id === 'APIC' || id === 'PIC') && !out.picture) out.picture = id3Picture(data, ver === 2);
+  }
+  return out;
+}
+
+const AUDIO_EXT = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm|alac|aiff?)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|webp)$/i;
 const files = {
   db: null,
+  covers: new Map(),
+  coversLoaded: false,
   open() {
     if (this.db) return Promise.resolve(this.db);
     return new Promise((res, rej) => {
       let req;
-      try { req = indexedDB.open('nota', 1); } catch (e) { rej(e); return; }
-      req.onupgradeneeded = () => req.result.createObjectStore('files', { keyPath: 'key' });
+      try { req = indexedDB.open('nota', 2); } catch (e) { rej(e); return; }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'key' });
+        if (!db.objectStoreNames.contains('covers')) db.createObjectStore('covers', { keyPath: 'key' });
+      };
       req.onsuccess = () => { this.db = req.result; res(this.db); };
       req.onerror = () => rej(req.error);
     });
   },
-  async tx(mode, fn) {
+  async tx(store, mode, fn) {
     const db = await this.open();
     return new Promise((res, rej) => {
-      const t = db.transaction('files', mode);
-      const r = fn(t.objectStore('files'));
+      const t = db.transaction(store, mode);
+      const r = fn(t.objectStore(store));
       t.oncomplete = () => res(r && r.result);
       t.onerror = () => rej(t.error);
     });
   },
-  all() { return this.tx('readonly', (s) => s.getAll()); },
-  get(key) { return this.tx('readonly', (s) => s.get(key)); },
-  put(rec) { return this.tx('readwrite', (s) => s.put(rec)); },
-  del(key) { return this.tx('readwrite', (s) => s.delete(key)); },
-  toTrack(r) { return { id: 'local:' + r.key, src: 'local', title: r.title, artist: r.artist || 'Мои файлы', album: 'Мои файлы', art: '', localKey: r.key }; },
+  all() { return this.tx('files', 'readonly', (s) => s.getAll()); },
+  get(key) { return this.tx('files', 'readonly', (s) => s.get(key)); },
+  put(rec) { return this.tx('files', 'readwrite', (s) => s.put(rec)); },
+  del(key) { return this.tx('files', 'readwrite', (s) => s.delete(key)); },
+  async loadCovers() {
+    if (this.coversLoaded) return;
+    try {
+      const list = await this.tx('covers', 'readonly', (s) => s.getAll());
+      for (const c of list) if (!this.covers.has(c.key)) this.covers.set(c.key, URL.createObjectURL(c.blob));
+    } catch {}
+    this.coversLoaded = true;
+  },
+  async putCover(key, blob) {
+    if (!blob || this.covers.has(key)) return;
+    await this.tx('covers', 'readwrite', (s) => s.put({ key, blob }));
+    this.covers.set(key, URL.createObjectURL(blob));
+  },
+  toTrack(r) {
+    return {
+      id: 'local:' + r.key, src: 'local', title: r.title, artist: r.artist || 'Неизвестный артист', album: r.album || '', albumArtist: r.albumArtist || r.artist || 'Неизвестный артист',
+      n: r.n || 0, localKey: r.key, coverKey: r.coverKey || '', art: this.covers.get(r.coverKey) || '',
+    };
+  },
+  async tracks() {
+    await this.loadCovers();
+    let recs = [];
+    try { recs = await this.all(); } catch {}
+    return recs.sort((a, b) => b.added - a.added).map((r) => this.toTrack(r));
+  },
+  /* imports files or a whole folder: tags first, then the folder layout Artist/Album/track */
   async add(list) {
-    let n = 0;
+    const dirCover = new Map();
     for (const f of list) {
-      if (!f.type.startsWith('audio') && !/\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)$/i.test(f.name)) continue;
+      if (!IMAGE_EXT.test(f.name)) continue;
+      const dir = (f.webkitRelativePath || '').split('/').slice(0, -1).join('/');
+      const pref = /cover|folder|front/i.test(f.name);
+      if (!dirCover.has(dir) || pref) dirCover.set(dir, f);
+    }
+    let existing = [];
+    try { existing = await this.all(); } catch {}
+    const seen = new Set(existing.map((r) => r.name + '|' + r.size));
+    const audioFiles = list.filter((f) => f.type.startsWith('audio') || AUDIO_EXT.test(f.name));
+    let n = 0;
+    for (const f of audioFiles) {
+      if (seen.has(f.name + '|' + f.size)) continue;
+      let tags = {};
+      try { tags = await readTags(f); } catch {}
+      const parts = (f.webkitRelativePath || f.name).split('/');
+      const dir = parts.slice(0, -1).join('/');
       const base = f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' ').trim();
-      const parts = base.split(/\s+[-–—]\s+/);
-      await this.put({ key: uid(), name: f.name, title: parts.length > 1 ? parts.slice(1).join(' - ') : base, artist: parts.length > 1 ? parts[0] : '', blob: f, added: Date.now() });
+      const noNum = base.replace(/^\d{1,3}[\s.\-_)]+/, '');
+      const dash = noNum.split(/\s+[-–—]\s+/);
+      const pathArtist = parts.length >= 3 ? parts[parts.length - 3] : '';
+      const pathAlbum = parts.length >= 2 ? parts[parts.length - 2] : '';
+      const artist = tags.artist || (dash.length > 1 ? dash[0] : '') || tags.albumArtist || pathArtist;
+      const albumArtist = tags.albumArtist || tags.artist || pathArtist || artist || 'Неизвестный артист';
+      const album = tags.album || pathAlbum;
+      const title = tags.title || (dash.length > 1 ? dash.slice(1).join(' - ') : noNum) || base;
+      const num = parseInt(tags.track, 10) || parseInt((base.match(/^(\d{1,3})/) || [])[1], 10) || 0;
+      const coverKey = (albumArtist + '|' + (album || dir)).toLowerCase();
+      if (!this.covers.has(coverKey)) {
+        const pic = tags.picture || dirCover.get(dir);
+        if (pic) { try { await this.putCover(coverKey, pic); } catch {} }
+      }
+      await this.put({ key: uid(), name: f.name, size: f.size, title, artist, albumArtist, album, n: num, year: tags.year || '', coverKey, blob: f, added: Date.now() + n });
+      seen.add(f.name + '|' + f.size);
       n++;
+      if (n % 15 === 0) toast(`Импорт: ${n} из ${audioFiles.length}`);
     }
     return n;
   },
 };
+/* group own tracks into artist folders and albums */
+function groupMine(tracks) {
+  const artists = new Map();
+  for (const t of tracks) {
+    const a = t.albumArtist;
+    if (!artists.has(a)) artists.set(a, { name: a, albums: new Map(), tracks: [] });
+    const g = artists.get(a);
+    g.tracks.push(t);
+    const al = t.album || 'Без альбома';
+    if (!g.albums.has(al)) g.albums.set(al, { title: al, artist: a, tracks: [], art: '' });
+    const A = g.albums.get(al);
+    A.tracks.push(t);
+    if (!A.art && t.art) A.art = t.art;
+  }
+  for (const g of artists.values()) for (const A of g.albums.values()) A.tracks.sort((x, y) => (x.n || 0) - (y.n || 0) || x.title.localeCompare(y.title));
+  return [...artists.values()].sort((x, y) => x.name.localeCompare(y.name, 'ru'));
+}
 
 /* ======================= sources ======================= */
 /* Audius: open catalog of independent artists from around the world */
@@ -503,7 +629,7 @@ function renderNow() {
   const t = P.cur;
   $('#mini').hidden = !t;
   if (!t) return;
-  const art = t.art || 'icon-512.png';
+  const art = (t.coverKey && files.covers.get(t.coverKey)) || t.art || 'icon-512.png';
   const big = t.artBig || art;
   $('#miniTitle').textContent = t.title;
   $('#miniArtist').textContent = t.artist || '';
@@ -743,6 +869,7 @@ function trackSheet(t, { playlistId, q, fileView } = {}) {
   if (t.artistId) l.push({ label: 'Перейти к артисту', icon: I.person, fn: () => { closePlayer(); go('#artist/' + t.artistId); } });
   if (t.alId) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#al/' + t.alId); } });
   if (t.albumId) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#album/' + encodeURIComponent(t.albumId)); } });
+  if (t.src === 'local') l.push({ label: 'Открыть папку артиста', icon: I.folder, fn: () => { closePlayer(); go('#mine-artist/' + encodeURIComponent(t.albumArtist || t.artist)); } });
   if (t.src === 'youtube') l.push({ label: 'Открыть на YouTube', icon: I.yt, fn: () => window.open('https://www.youtube.com/watch?v=' + t.ytId, '_blank', 'noopener') });
   if (playlistId) l.push({ label: 'Удалить из плейлиста', icon: I.trash, danger: true, fn: () => { const p = lib.playlists.find((x) => x.id === playlistId); if (p) { p.tracks = p.tracks.filter((x) => x.id !== t.id); lib.save('playlists'); route(); } } });
   if (fileView) l.push({ label: 'Удалить файл', icon: I.trash, danger: true, fn: async () => { await files.del(t.localKey); toast('Файл удалён'); route(); } });
@@ -893,6 +1020,7 @@ const views = {
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
     h += section('Артисты недели', lazy(mapP(trendingWeek(), (t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)));
+    h += section('Андеграунд-рэп', lazy(cached('au-pl:rage', () => audius.search('playlists', 'rage', 16)), (l) => shelf(l.map(card).join(''))), '#underground');
     h += section('Радио в России', lazy(cached('radio:RU|', () => radio.search({ country: 'RU', limit: 80 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#radio');
     h += section('Популярные плейлисты', lazy(cached('au-playlists', () => audius.trendingLists('playlist')), (l) => shelf(l.map(card).join(''))));
     for (const [key, name, q] of ARCHIVE_SETS.slice(0, 2)) h += section(name, lazy(cached('ia:' + key, () => archive.search(q, { rows: 20 })), (l) => shelf(l.map(card).join(''))), '#archive/' + key);
@@ -901,6 +1029,7 @@ const views = {
 
   browse() {
     let h = `<h1 class="page-title">Обзор</h1><p class="page-sub">Музыка независимых артистов со всего мира</p>`;
+    h += `<a class="feature" href="#underground" style="margin-top:22px"><div><div class="eyebrow">Подборка</div><div class="ft">Андеграунд-рэп</div><div class="fs">Рейдж, плагг, фонк, дрилл и трэп</div></div><div class="art" data-underground-art>${img('')}</div></a>`;
     h += section('Чарты', `<ul class="menu">
       <li><a href="#chart/week">${I.note}<span>Топ-100 недели</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
       <li><a href="#chart/month">${I.note}<span>Топ-100 месяца</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
@@ -910,6 +1039,10 @@ const views = {
     h += section('Из архивов', `<div class="tiles">${ARCHIVE_SETS.map(([k, n]) => `<a class="tile" href="#archive/${k}" data-archive-art="${k}"><span>${esc(n)}</span></a>`).join('')}</div>`);
     view.innerHTML = h;
     fillTileArt();
+    whenReady(cached('au-genre:Hip-Hop/Rap:week', () => audius.trending({ genre: 'Hip-Hop/Rap', time: 'week', limit: 60 })), (l) => {
+      const el = $('[data-underground-art]'); const t = l.find((x) => x.artBig);
+      if (el && t) el.insertAdjacentHTML('beforeend', `<img src="${esc(t.artBig)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`);
+    }, () => {});
   },
 
   chart(time = 'week') {
@@ -1048,31 +1181,77 @@ const views = {
         (l.length ? rows(l) : `<div class="empty"><b>Нет сохранённых станций</b>Сохраняйте станции через «…» или сердечко в плеере.<br><a class="btn slim" href="#radio">Открыть радио</a></div>`);
       return;
     }
-    if (arg === 'files') {
-      view.innerHTML = backBtn('#library') + `<h1 class="page-title">Мои файлы</h1>` + skRows(4);
-      let recs = [];
-      try { recs = (await files.all()).sort((a, b) => b.added - a.added); } catch {}
-      if (location.hash !== '#library/files') return;
-      const l = recs.map((r) => files.toTrack(r));
-      const k = reg(l);
-      view.innerHTML = backBtn('#library') + `<h1 class="page-title">Мои файлы</h1>
-        <div class="actions"><button class="btn solid" id="addFiles">${I.plus}Добавить</button>${l.length ? `<button class="btn" data-play="${k}" data-i="0">${I.play}Слушать</button>` : ''}</div>
-        <div data-files>${l.length ? rows(l, { key: k }) : `<div class="empty"><b>Добавьте свою музыку</b>MP3, M4A, FLAC, OGG или WAV. Файлы хранятся только на этом устройстве.</div>`}</div>`;
-      $('#addFiles').onclick = () => $('#filePick').click();
-      return;
-    }
+    if (arg === 'files') { location.replace('#mine'); return; }
     const chev = I.chev.replace('<svg', '<svg class="chev"');
     view.innerHTML = `<h1 class="page-title">Медиатека</h1>
       <ul class="menu">
         <li><a href="#library/liked">${I.heartOn}<span>Избранное</span><span class="cnt">${lib.liked.length || ''}</span>${chev}</a></li>
         <li><a href="#library/artists">${I.person}<span>Артисты</span><span class="cnt">${lib.artists.length || ''}</span>${chev}</a></li>
         <li><a href="#library/stations">${I.radio}<span>Мои станции</span><span class="cnt">${lib.stations.length || ''}</span>${chev}</a></li>
-        <li><a href="#library/files">${I.file}<span>Мои файлы</span>${chev}</a></li>
+        <li><a href="#mine">${I.folder}<span>Моя музыка</span>${chev}</a></li>
         <li><a href="#settings">${I.gear}<span>Источники</span>${chev}</a></li>
       </ul>` +
       section('Плейлисты', `<div class="grid"><button class="card" id="newPl"><div class="art"><div class="ph" style="color:var(--accent)">${I.plus}</div></div><span class="t1">Новый плейлист</span><span class="t2">&nbsp;</span></button>${lib.playlists.map(playlistCard).join('')}</div>`) +
       (lib.recent.length ? section('Недавно играло', rows(lib.recent.slice(0, 20))) : '');
     $('#newPl').onclick = () => playlistForm();
+  },
+
+  async mine() {
+    const tab = store.get('mineTab', 'artists');
+    view.innerHTML = backBtn('#library') + `<h1 class="page-title">Моя музыка</h1>` + skRows(4);
+    const tracks = await files.tracks();
+    if (location.hash !== '#mine') return;
+    const groups = groupMine(tracks);
+    const albums = groups.flatMap((g) => [...g.albums.values()]);
+    const k = reg(tracks);
+    let body = '';
+    if (!tracks.length) body = `<div class="empty"><b>Добавьте свою музыку</b>Выберите папку с музыкой: приложение само разложит треки по артистам и альбомам, возьмёт названия и обложки из файлов. Музыка хранится только на этом устройстве.</div>`;
+    else if (tab === 'artists') body = `<div class="grid">${groups.map(folderCard).join('')}</div>`;
+    else if (tab === 'albums') body = `<div class="grid">${albums.map(mineAlbumCard).join('')}</div>`;
+    else body = `<div data-files>${rows(tracks, { key: k })}</div>`;
+    view.innerHTML = backBtn('#library') + `<h1 class="page-title">Моя музыка</h1>
+      <p class="page-sub">${tracksWord(tracks.length)}${groups.length ? ` · ${groups.length} ${plural(groups.length, 'артист', 'артиста', 'артистов')}` : ''}</p>
+      <div class="actions"><button class="btn solid" id="addFolder">${I.folder}Папка</button><button class="btn" id="addFiles">${I.plus}Файлы</button></div>
+      ${tracks.length ? `<div class="seg">${[['artists', 'Артисты'], ['albums', 'Альбомы'], ['tracks', 'Треки']].map(([v, n]) => `<button class="${v === tab ? 'on' : ''}" data-mtab="${v}">${n}</button>`).join('')}<button data-shuffle="${k}">${I.shuffle.replace('<svg', '<svg width="15" height="15" style="vertical-align:-2px;margin-right:4px"')}Перемешать всё</button></div>` : ''}
+      <div style="margin-top:14px">${body}</div>`;
+    $('#addFolder').onclick = () => $('#folderPick').click();
+    $('#addFiles').onclick = () => $('#filePick').click();
+    $$('[data-mtab]', view).forEach((b) => b.onclick = () => { store.set('mineTab', b.dataset.mtab); views.mine(); });
+  },
+
+  async 'mine-artist'(name) {
+    name = decodeURIComponent(name || '');
+    view.innerHTML = backBtn('#mine') + skRows(4);
+    const g = groupMine(await files.tracks()).find((x) => x.name === name);
+    if (!g) { view.innerHTML = backBtn('#mine') + '<div class="empty"><b>Папка пуста</b></div>'; return; }
+    const albums = [...g.albums.values()];
+    const all = albums.flatMap((a) => a.tracks);
+    const k = reg(all);
+    view.innerHTML = backBtn('#mine') + `<h1 class="page-title">${esc(g.name)}</h1><p class="page-sub">${albums.length} ${plural(albums.length, 'альбом', 'альбома', 'альбомов')} · ${tracksWord(all.length)}</p>` +
+      playActions(k) +
+      (albums.length > 1 || albums[0].title !== 'Без альбома' ? section('Альбомы', shelf(albums.map(mineAlbumCard).join(''))) : '') +
+      section('Все треки', `<div data-files>${rows(all, { key: k })}</div>`);
+  },
+
+  async 'mine-album'(arg) {
+    const [artist, title] = arg.split('/').map(decodeURIComponent);
+    view.innerHTML = backBtn() + skRows(4);
+    const g = groupMine(await files.tracks()).find((x) => x.name === artist);
+    const a = g && g.albums.get(title);
+    if (!a) { view.innerHTML = backBtn('#mine') + '<div class="empty"><b>Альбом не найден</b></div>'; return; }
+    const k = reg(a.tracks);
+    view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.art)}</div><div><h1>${esc(a.title)}</h1><a class="by" href="#mine-artist/${encodeURIComponent(a.artist)}">${esc(a.artist)}</a><div class="info">Моя музыка</div></div></div>` +
+      playActions(k) + `<div data-files>${rows(a.tracks, { key: k, numbered: true, n: (t, i) => t.n || i + 1, sub: (t) => t.artist !== a.artist ? esc(t.artist) : '' })}</div>` +
+      `<p class="foot">${tracksWord(a.tracks.length)}</p>`;
+  },
+
+  underground() {
+    const lists = [['rage', 'Рейдж'], ['plugg', 'Плагг'], ['underground rap', 'Андеграунд'], ['phonk', 'Фонк'], ['drill', 'Дрилл'], ['emo rap', 'Эмо-рэп']];
+    let h = backBtn('#browse') + `<h1 class="page-title">Андеграунд-рэп</h1><p class="page-sub">Независимые рэперы, которые сами выкладывают свою музыку</p>`;
+    h += lazy(cached('au-genre:Hip-Hop/Rap:week', () => audius.trending({ genre: 'Hip-Hop/Rap', time: 'week', limit: 60 })), (l) => { const k = reg(l); return playActions(k) + section('Хип-хоп: хиты недели', rows(l.slice(0, 10), { key: k, showDur: true }), '#genre/' + encodeURIComponent('Hip-Hop/Rap')) + section('Рэперы недели', shelf(artistsOf(l, 14).map(card).join(''), 'small')); }, skRows(6));
+    h += section('Трэп', lazy(cached('au-genre:Trap:week', () => audius.trending({ genre: 'Trap', time: 'week', limit: 60 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#genre/Trap');
+    for (const [q, n] of lists) h += section(n, lazy(cached('au-pl:' + q, () => audius.search('playlists', q, 16)), (l) => l.length ? shelf(l.map(card).join('')) : '<p class="note">Пока пусто</p>'));
+    view.innerHTML = h;
   },
 
   playlist(id) {
@@ -1131,6 +1310,14 @@ function mosaic(tracks) {
   const arts = [...new Set(tracks.map((t) => t.art).filter(Boolean))].slice(0, 4);
   if (arts.length < 4) return img(arts[0]);
   return `<div style="position:absolute;inset:0;display:grid;grid-template-columns:1fr 1fr">${arts.map((a) => `<img src="${esc(a)}" alt="" style="position:static;width:100%;height:100%;object-fit:cover" referrerpolicy="no-referrer">`).join('')}</div>`;
+}
+function folderCard(g) {
+  const arts = [...g.albums.values()].map((a) => a.art).filter(Boolean).slice(0, 4);
+  const pic = arts.length >= 4 ? `<div style="position:absolute;inset:0;display:grid;grid-template-columns:1fr 1fr">${arts.map((a) => `<img src="${a}" alt="" style="position:static;width:100%;height:100%;object-fit:cover">`).join('')}</div>` : arts[0] ? `<img src="${arts[0]}" alt="">` : `<div class="ph">${I.folder}</div>`;
+  return `<a class="card" href="#mine-artist/${encodeURIComponent(g.name)}"><div class="art">${pic}</div><span class="t1">${esc(g.name)}</span><span class="t2">${g.albums.size} ${plural(g.albums.size, 'альбом', 'альбома', 'альбомов')} · ${tracksWord(g.tracks.length)}</span></a>`;
+}
+function mineAlbumCard(a) {
+  return `<a class="card" href="#mine-album/${encodeURIComponent(a.artist)}/${encodeURIComponent(a.title)}"><div class="art">${img(a.art)}</div><span class="t1">${esc(a.title)}</span><span class="t2">${esc(a.artist)}</span></a>`;
 }
 function playlistCard(p) {
   return `<a class="card" href="#playlist/${p.id}"><div class="art">${mosaic(p.tracks)}</div><span class="t1">${esc(p.name)}</span><span class="t2">${tracksWord(p.tracks.length)}</span></a>`;
@@ -1211,7 +1398,7 @@ function route() {
   const [name, ...rest] = h.split('/');
   const arg = rest.join('/');
   const fn = views[name] || views.home;
-  const tab = { chart: 'browse', genre: 'browse', archive: 'browse', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
+  const tab = { chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
   const active = tab === undefined ? (views[name] ? name : 'home') : tab;
   if (active !== null) $$('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === active));
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
@@ -1231,15 +1418,19 @@ function prefetchVisible() {
 }
 new MutationObserver(prefetchVisible).observe(view, { childList: true, subtree: true });
 
-$('#filePick').addEventListener('change', async (e) => {
+async function importPicked(e) {
   const list = [...e.target.files];
   e.target.value = '';
   if (!list.length) return;
-  try { const n = await files.add(list); toast(n ? `Добавлено: ${n}` : 'Это не аудиофайлы'); } catch { toast('Не удалось сохранить файлы'); }
-  if (location.hash === '#library/files') route();
-});
+  toast('Импорт музыки…');
+  try { const n = await files.add(list); toast(n ? `Добавлено треков: ${n}` : 'Новых аудиофайлов не найдено'); } catch { toast('Не удалось сохранить: возможно, мало места'); }
+  if (location.hash.startsWith('#mine')) route(); else go('#mine');
+}
+$('#filePick').addEventListener('change', importPicked);
+$('#folderPick').addEventListener('change', importPicked);
 
 /* ======================= boot ======================= */
 route();
 if (P.cur) renderNow(); else renderPlayState();
+files.loadCovers().then(() => { if (P.cur && P.cur.src === 'local') renderNow(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
