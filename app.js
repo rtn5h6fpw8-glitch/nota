@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '14 · 22.10.2026';
+const APP_VERSION = '16 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -169,8 +169,8 @@ const lib = {
   pushSearch(q) { this.searches = [q, ...this.searches.filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8); this.save('searches'); },
 };
 function slim(t) {
-  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at } = t;
-  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at };
+  const { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at, link } = t;
+  return { id, src, title, artist, artistId, album, albumId, alId, thumb, art, artBig, url, duration, live, ytId, localKey, coverKey, uuid, dzId, dzArtist, dzAlbum, preview, at, link };
 }
 
 /* ---------- own music (IndexedDB): files, tags and album covers ---------- */
@@ -528,6 +528,81 @@ const deezer = {
   },
 };
 
+/* Full versions of label songs: the official YouTube video, found through the open
+   MusicBrainz and Wikidata databases (no keys), played in YouTube's own embedded player. */
+const full = {
+  jobs: [],
+  busy: false,
+  last: 0,
+  /* MusicBrainz allows one request per second; the song you tapped goes to the front of the line */
+  mb(path, urgent) {
+    return new Promise((res, rej) => {
+      const job = { path, res, rej };
+      if (urgent) this.jobs.unshift(job); else this.jobs.push(job);
+      this.pump();
+    });
+  },
+  async pump() {
+    if (this.busy) return;
+    this.busy = true;
+    while (this.jobs.length) {
+      const job = this.jobs.shift();
+      const wait = this.last + 1100 - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      this.last = Date.now();
+      getJSONOnce(`https://musicbrainz.org/ws/2/${job.path}${job.path.includes('?') ? '&' : '?'}fmt=json`, 12000).then(job.res, job.rej);
+    }
+    this.busy = false;
+  },
+  ytFrom(rels) { for (const r of rels || []) { const id = r.url && yt.parse(r.url.resource); if (id) return id; } return ''; },
+  clean(t) { return String(t).replace(/\s*[([](feat|ft|with|prod)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').trim(); },
+  async wikidata(title, artist) {
+    const q = (x) => x.replace(/["\\]/g, '');
+    const sparql = `SELECT ?yt WHERE { ?s wdt:P1651 ?yt; wdt:P175 ?p; rdfs:label ?l. { ?p rdfs:label "${q(artist)}"@en } UNION { ?p skos:altLabel "${q(artist)}"@en } FILTER(LCASE(STR(?l)) = "${q(title.toLowerCase())}") } LIMIT 1`;
+    const d = await getJSONOnce('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(sparql), 12000);
+    const b = d.results.bindings[0];
+    return b ? b.yt.value : '';
+  },
+  on() { return lib.settings.full !== false; },
+  /* with the viewer's own YouTube key, search YouTube directly: finds almost every song */
+  async ytSearch(title, artist) {
+    const key = lib.settings.ytKey;
+    if (!key) return '';
+    const p = new URLSearchParams({ part: 'snippet', type: 'video', videoEmbeddable: 'true', maxResults: '3', q: `${artist} ${title} official`, key });
+    const d = await getJSONOnce('https://www.googleapis.com/youtube/v3/search?' + p, 10000);
+    const items = (d.items || []).filter((x) => x.id && x.id.videoId);
+    const a = norm(artist);
+    const best = items.find((x) => norm(x.snippet.channelTitle).includes(a) || /vevo|topic/i.test(x.snippet.channelTitle)) || items[0];
+    return best ? best.id.videoId : '';
+  },
+  find(t, urgent) {
+    const u = !!urgent;
+    return cached((lib.settings.ytKey ? 'fullk:' : 'full:') + t.dzId, async () => {
+      const x = await deezer.get(`track/${t.dzId}`);
+      t.url = x.preview; t.at = Date.now();
+      if (x.isrc && !lib.settings.ytKey) {
+        const d = await this.mb(`isrc/${x.isrc}?inc=url-rels`, u).catch(() => null);
+        for (const r of (d && d.recordings) || []) { const id = this.ytFrom(r.relations); if (id) return id; }
+      }
+      const title = this.clean(x.title_short || t.title), artist = x.artist ? x.artist.name : t.artist;
+      const k = await this.ytSearch(title, artist).catch(() => '');
+      if (k) return k;
+      const w = await this.wikidata(title, artist).catch(() => '');
+      if (w) return w;
+      const s = await this.mb(`recording?query=${encodeURIComponent(`recording:"${title}" AND artist:"${artist}"`)}&limit=4`, u).catch(() => null);
+      for (const r of ((s && s.recordings) || []).slice(0, 3)) {
+        const d = await this.mb(`recording/${r.id}?inc=url-rels`, u).catch(() => null);
+        const id = d && this.ytFrom(d.relations);
+        if (id) return id;
+      }
+      return '';
+    }, 30 * 24 * 3600e3);
+  },
+  /* look up the next songs ahead of time so they start without waiting */
+  warm(list) { if (this.on()) setTimeout(() => list.filter((t) => t.src === 'deezer').slice(0, 3).forEach((t) => this.find(t).catch(() => {})), 1500); },
+};
+const isVideo = (t) => !!t && (t.src === 'youtube' || !!t.full);
+
 const yt = {
   parse(s) {
     const m = String(s).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/|music\.youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/);
@@ -570,7 +645,17 @@ const P = {
     this.persist();
     lib.pushRecent(t);
     stopYT();
-    if (t.src === 'youtube') {
+    t.full = false;
+    if (t.src === 'deezer' && full.on()) {
+      const known = full.find(t, true);
+      if (known.v === undefined) { renderNow(); toast('Ищу полную версию…'); }
+      const id = await known.catch(() => '');
+      if (this.queue[this.idx] !== t) return;
+      if (id) { t.ytId = id; t.full = true; }
+      else toast('Полной версии не нашлось, играет превью 30 с');
+      full.warm(this.queue.slice(this.idx + 1, this.idx + 3));
+    }
+    if (isVideo(t)) {
       audio.pause(); audio.removeAttribute('src'); audio.load();
       startYT(t.ytId); renderNow(); return;
     }
@@ -594,7 +679,7 @@ const P = {
   toggle() {
     const t = this.cur;
     if (!t) return;
-    if (t.src === 'youtube') { if (!ytFrame) startYT(t.ytId); else ytCmd(this.ytState === 1 ? 'pauseVideo' : 'playVideo'); return; }
+    if (isVideo(t)) { if (!ytFrame) startYT(t.ytId); else ytCmd(this.ytState === 1 ? 'pauseVideo' : 'playVideo'); return; }
     if (!audio.getAttribute('src')) return this.play(this.idx);
     if (audio.paused) audio.play().catch(() => {}); else audio.pause();
   },
@@ -606,7 +691,7 @@ const P = {
     audio.pause(); renderPlayState();
   },
   prev() {
-    if (this.cur && this.cur.src !== 'youtube' && audio.currentTime > 3) { audio.currentTime = 0; return; }
+    if (this.cur && !isVideo(this.cur) && audio.currentTime > 3) { audio.currentTime = 0; return; }
     this.play(this.idx > 0 ? this.idx - 1 : this.queue.length - 1);
   },
   skipAfterError() {
@@ -617,7 +702,7 @@ const P = {
   get playing() {
     const t = this.cur;
     if (!t) return false;
-    return t.src === 'youtube' ? this.ytState === 1 || this.ytState === 3 : !audio.paused;
+    return isVideo(t) ? this.ytState === 1 || this.ytState === 3 : !audio.paused;
   },
 };
 function shuffled(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
@@ -665,6 +750,13 @@ function ytCmd(func, args = []) { ytPost({ event: 'command', func, args }); }
 window.addEventListener('message', (e) => {
   if (!ytFrame || e.source !== ytFrame.contentWindow) return;
   let d; try { d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch { return; }
+  if (d && d.event === 'onError' && P.cur && P.cur.full) {
+    const t = P.cur;
+    t.full = false; stopYT();
+    toast('Видео недоступно, играет превью 30 с');
+    deezer.fresh(t).then((u) => { audio.src = u; renderNow(); audio.play().catch(() => {}); }).catch(() => P.skipAfterError());
+    return;
+  }
   const st = d && d.info && typeof d.info === 'object' ? d.info.playerState : d && d.event === 'onStateChange' ? d.info : undefined;
   if (typeof st === 'number' && st !== P.ytState) { P.ytState = st; renderPlayState(); if (st === 0) P.next(true); }
 });
@@ -713,7 +805,7 @@ function renderNow() {
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
   $('#playerBg').style.backgroundImage = `url("${art.replace(/"/g, '%22')}")`;
-  const video = t.src === 'youtube';
+  const video = isVideo(t);
   $('#stage').classList.toggle('video', video);
   $('#bigArt').hidden = video;
   $('#seek').classList.toggle('disabled', !!t.live);
@@ -731,7 +823,7 @@ function renderNow() {
 function renderPlayState() {
   const on = P.playing;
   for (const b of [$('#play'), $('#miniPlay')]) { b.innerHTML = on ? I.pause : I.play; b.setAttribute('aria-label', on ? 'Пауза' : 'Играть'); }
-  $('#stage').classList.toggle('paused', !on && !(P.cur && P.cur.src === 'youtube'));
+  $('#stage').classList.toggle('paused', !on && !isVideo(P.cur));
   document.body.classList.toggle('is-paused', !on);
   try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = on ? 'playing' : 'paused'; } catch {}
   $('#shuffle').classList.toggle('on', P.shuffle);
@@ -986,7 +1078,7 @@ function row(t, i, key, o = {}) {
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
     : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span>`;
-  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : t.preview ? '<span class="tag">30 с</span>' : '') + esc(t.artist || '');
+  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : t.preview ? (full.on() ? '<span class="tag">YouTube</span>' : '<span class="tag">30 с</span>') : '') + esc(t.artist || '');
   const dur = !o.noDur && !t.live && t.duration ? fmt(t.duration) : '';
   const q = o.q != null ? ` data-q="${o.q}"` : '';
   return `<li class="row" data-id="${esc(t.id)}"><button class="hit" data-play="${key}" data-i="${i}"${q}>${lead}<span class="meta"><b>${esc(t.title)}</b>${sub ? `<small>${sub}</small>` : ''}</span></button><span class="tail">${o.showDur ? dur : ''}<button class="dots" data-more="${key}" data-i="${i}"${q} aria-label="Действия">${I.more}</button></span></li>`;
@@ -1392,9 +1484,10 @@ const views = {
       const k = reg(a.top);
       let h = `<div class="artist-head"><img class="cover" src="${esc(a.avatarBig || a.avatar)}" alt="" referrerpolicy="no-referrer"><a class="back" href="#" data-back>${I.back}</a>
         <div class="who"><div><h1>${esc(a.name)}</h1><p>${a.fans ? fmtCount(a.fans) + ' поклонников · ' : ''}официальный каталог</p></div></div></div>`;
-      h += a.top.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Превью</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` : '';
-      h += `<p class="note">Официальные 30-секундные превью. Полную версию трека можно открыть на YouTube через «…».</p>`;
+      h += a.top.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` : '';
+      h += `<p class="note">${full.on() ? 'Полные версии играют в официальном плеере YouTube, с видео на экране. Если видео не нашлось, играет официальное превью 30 секунд.' : 'Официальные превью по 30 секунд. Полные версии можно включить в «Источниках».'}</p>`;
       if (a.top.length) h += section('Популярные треки', rows(a.top.slice(0, 10), { key: k }));
+      full.warm(a.top);
       if (a.albums.length) h += section('Альбомы', shelf(a.albums.map(card).join('')));
       if (a.singles.length) h += section('Синглы и EP', shelf(a.singles.map(card).join('')));
       if (a.related.length) h += section('Похожие артисты', shelf(a.related.map(card).join(''), 'small'));
@@ -1411,8 +1504,9 @@ const views = {
       view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art)}</div><div>
         <h1>${esc(a.title)}</h1><a class="by" href="#dz/${a.dzArtist}">${esc(a.artist)}</a>
         <div class="info">${[{ album: 'Альбом', single: 'Сингл', ep: 'EP', compile: 'Сборник' }[a.type] || 'Альбом', a.year].filter(Boolean).join(' · ')}</div></div></div>` +
-        (a.tracks.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Превью</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` + rows(a.tracks, { key: k, numbered: true, sub: () => '<span class="tag">30 с</span>' }) : '<div class="empty"><b>Превью недоступны</b></div>') +
-        `<p class="foot">${tracksWord(a.tracks.length)}${a.total ? ', ' + fmtLong(a.total) : ''}${a.label ? '<br>' + esc(a.label) : ''}<br>Официальные превью по 30 секунд, данные Deezer</p>`;
+        (a.tracks.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` + rows(a.tracks, { key: k, numbered: true, sub: () => '' }) : '<div class="empty"><b>Превью недоступны</b></div>') +
+        `<p class="foot">${tracksWord(a.tracks.length)}${a.total ? ', ' + fmtLong(a.total) : ''}${a.label ? '<br>' + esc(a.label) : ''}<br>Данные Deezer${full.on() ? ' · полные версии через YouTube' : ' · превью по 30 секунд'}</p>`;
+      full.warm(a.tracks);
       markPlaying();
     }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть альбом.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
@@ -1453,6 +1547,11 @@ const views = {
       <div class="group"><h3>Internet Archive</h3><p class="note">Независимые лейблы, живые концерты, старые пластинки.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Radio Browser</h3><p class="note">Около 50 000 интернет-радиостанций из 200 стран.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>YouTube</h3><p class="note">Вставьте ссылку на видео в поиск. Видео играет в официальном плеере и остаётся на экране.</p><span class="state"><i></i>Подключено</span></div>
+      <div class="group"><h3>Полные версии песен звёзд</h3><p class="note">Песни артистов крупных лейблов играют целиком в официальном плеере YouTube, видео остаётся на экране. Нужное видео ищется через открытые базы MusicBrainz и Wikidata. Если его нет, играет превью 30 секунд. На iPhone видео останавливается, когда экран гаснет.</p>
+        <label class="state" style="font-size:15px;color:var(--fg)"><input type="checkbox" id="fullOn" ${full.on() ? 'checked' : ''}> Играть полные версии</label>
+        <p class="note">Без ключа видео находится примерно для трети песен. С бесплатным ключом YouTube — почти для всех. Ключ хранится только на этом устройстве.</p>
+        <input class="text" id="ytKey" placeholder="Ключ YouTube API" autocomplete="off" value="${esc(lib.settings.ytKey || '')}">
+        <button class="btn solid" id="ytKeySave">Сохранить ключ</button></div>
       <form class="group" id="jmForm"><h3>Jamendo</h3>
         <p class="note">Ещё около 600 000 треков. Нужен бесплатный ключ: зарегистрируйтесь на <a class="text-btn" href="https://devportal.jamendo.com/" target="_blank" rel="noopener">devportal.jamendo.com</a>, создайте приложение и вставьте его Client ID.</p>
         <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(lib.settings.jamendo)}">
@@ -1466,6 +1565,14 @@ const views = {
       if (!key) return toast('Jamendo отключён');
       try { await jamendo.tracks({ limit: 1 }); toast('Jamendo подключён'); } catch { toast('Ключ не подошёл'); }
     };
+    $('#ytKeySave').onclick = async () => {
+      const key = $('#ytKey').value.trim();
+      lib.settings.ytKey = key; lib.save('settings');
+      if (!key) return toast('Ключ удалён');
+      try { const id = await full.ytSearch('Runaway', 'Kanye West'); toast(id ? 'Ключ работает: полные версии найдутся почти для всех песен' : 'Ключ сохранён, но поиск ничего не вернул'); }
+      catch { toast('Ключ не подошёл. Проверьте, что включён YouTube Data API v3'); }
+    };
+    $('#fullOn').onchange = (e) => { lib.settings.full = e.target.checked; lib.save('settings'); toast(e.target.checked ? 'Полные версии включены' : 'Будут играть превью'); };
     $('#wipe').onclick = () => { lib.recent = []; lib.searches = []; lib.save('recent'); lib.save('searches'); toast('История очищена'); };
   },
 };
