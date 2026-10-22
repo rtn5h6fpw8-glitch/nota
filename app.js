@@ -24,6 +24,9 @@ const store = {
 };
 
 async function getJSON(url, ms = 15000) {
+  try { return await getJSONOnce(url, ms); } catch { return getJSONOnce(url, ms); }
+}
+async function getJSONOnce(url, ms) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
   try {
