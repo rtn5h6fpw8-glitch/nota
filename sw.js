@@ -1,7 +1,7 @@
 // App shell is served from cache and refreshed in the background; artwork is cached after the first view.
-const CACHE = 'nota-v10';
+const CACHE = 'nota-v11';
 const IMG = 'nota-img-v1';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest'];
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest', 'fonts/bowlby-note.woff2'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE && k !== IMG).map((k) => caches.delete(k)))));
@@ -30,7 +30,7 @@ self.addEventListener('fetch', (e) => {
       const hit = await c.match(r);
       if (hit) return hit;
       const res = await fetch(r);
-      if (res.ok || res.type === 'opaque') { c.put(r, res.clone()); e.waitUntil(trim()); }
+      if (res.ok || res.type === 'opaque') { c.put(r, res.clone()); if (Math.random() < 0.05) e.waitUntil(trim()); }
       return res;
     }));
   }

@@ -52,7 +52,8 @@ const memo = new Map();
 const CACHE_FRESH = 15 * 60 * 1000;
 const disk = {
   get(k) { try { const v = localStorage.getItem('nota:c:' + k); return v ? JSON.parse(v) : null; } catch { return null; } },
-  set(k, d) {
+  set(k, d) { (window.requestIdleCallback || setTimeout)(() => this.write(k, d)); },
+  write(k, d) {
     const v = JSON.stringify({ t: Date.now(), d });
     try { localStorage.setItem('nota:c:' + k, v); } catch {
       try { Object.keys(localStorage).filter((x) => x.startsWith('nota:c:')).forEach((x) => localStorage.removeItem(x)); localStorage.setItem('nota:c:' + k, v); } catch {}
@@ -60,14 +61,14 @@ const disk = {
   },
 };
 const ready = (d) => { const p = Promise.resolve(d); p.v = d; return p; };
-function cached(key, fn) {
+function cached(key, fn, fresh = CACHE_FRESH) {
   if (memo.has(key)) return memo.get(key);
   const hit = disk.get(key);
   const load = () => fn().then((d) => { disk.set(key, d); return d; });
   let p;
   if (hit) {
     p = ready(hit.d);
-    if (Date.now() - hit.t > CACHE_FRESH) load().then((d) => memo.set(key, ready(d))).catch(() => {});
+    if (Date.now() - hit.t > fresh) load().then((d) => memo.set(key, ready(d))).catch(() => {});
   } else {
     p = load().then((d) => { p.v = d; return d; }, (e) => { memo.delete(key); throw e; });
   }
@@ -1028,7 +1029,7 @@ const rapIndex = () => cached('rap-index', async () => {
   const all = artistsOf(lists.flat(), 5000);
   if (!all.length) throw new Error('empty');
   return all.sort((a, b) => b.followers - a.followers);
-});
+}, 24 * 3600e3);
 const norm = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, '');
 function matchArtists(list, q, key = 'name') {
   const n = norm(q);
@@ -1037,7 +1038,7 @@ function matchArtists(list, q, key = 'name') {
     .filter((x) => x.r >= 0).sort((x, y) => x.r - y.r).map((x) => x.a);
 }
 function folderRow(a) {
-  return `<li class="row"><a class="hit" href="#artist/${a.id}"><span class="thumb round">${img(a.avatar, true)}</span><span class="meta"><b>${esc(a.name)}</b><small>${a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист'}</small></span></a><span class="tail">${I.chev.replace('<svg', '<svg width="18" height="18" style="color:var(--fg-3)"')}</span></li>`;
+  return `<li class="row"><a class="hit" href="#artist/${a.id}"><span class="thumb round">${img(a.avatar, true)}</span><span class="meta"><b>${esc(a.name)}</b><small>${a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист'}</small></span></a><span class="tail chev-tail"></span></li>`;
 }
 
 /* ======================= views ======================= */
@@ -1294,13 +1295,21 @@ const views = {
     whenReady(rapIndex(), (list) => {
       const out = $('#rapList');
       if (!out) return;
+      let drawJob = 0;
       const draw = (q) => {
+        drawJob++;
         const l = q ? matchArtists(list, q) : list.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', { sensitivity: 'base' }));
         if (!l.length) { out.innerHTML = '<div class="empty"><b>Не нашлось</b>Попробуйте общий поиск: там больше артистов.</div>'; return; }
         if (q) { out.innerHTML = `<ul class="list">${l.map(folderRow).join('')}</ul>`; return; }
         const groups = new Map();
         for (const a of l) { const ch = (a.name.trim()[0] || '#').toUpperCase(); const k = /\p{L}/u.test(ch) ? ch : '#'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
-        out.innerHTML = `<p class="page-sub">${list.length} ${plural(list.length, 'папка', 'папки', 'папок')}</p>` + [...groups].sort((x, y) => (x[0] === '#') - (y[0] === '#')).map(([k, g]) => `<section class="section" style="margin-top:18px"><div class="sec-head"><h2>${esc(k)}</h2></div><ul class="list">${g.map(folderRow).join('')}</ul></section>`).join('');
+        const parts = [...groups].sort((x, y) => (x[0] === '#') - (y[0] === '#')).map(([k, g]) => `<section class="section" style="margin-top:18px"><div class="sec-head"><h2>${esc(k)}</h2></div><ul class="list">${g.map(folderRow).join('')}</ul></section>`);
+        out.innerHTML = `<p class="page-sub">${list.length} ${plural(list.length, 'папка', 'папки', 'папок')}</p>` + parts.slice(0, 3).join('');
+        /* the rest of the alphabet is added in small steps so the first screen shows at once */
+        const job = ++drawJob;
+        let i = 3;
+        const more = () => { if (job !== drawJob || !out.isConnected || i >= parts.length) return; out.insertAdjacentHTML('beforeend', parts.slice(i, i + 3).join('')); i += 3; setTimeout(more, 16); };
+        setTimeout(more, 60);
       };
       draw('');
       $('#rq').addEventListener('input', (e) => draw(e.target.value.trim()));
@@ -1378,7 +1387,7 @@ function playlistCard(p) {
 function fillTileArt() {
   $$('[data-genre-art]').forEach((el) => {
     const g = el.dataset.genreArt;
-    cached(`au-genre:${g}:week`, () => audius.trending({ genre: g, time: 'week', limit: 60 })).then((l) => {
+    cached('au-tile:' + g, () => audius.trending({ genre: g, time: 'week', limit: 3 }), 24 * 3600e3).then((l) => {
       const t = l.find((x) => x.art);
       if (t && el.isConnected) el.insertAdjacentHTML('afterbegin', `<img src="${esc(t.art)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`);
     }).catch(() => {});
@@ -1502,6 +1511,6 @@ async function seedCache() {
 await seedCache();
 route();
 if (P.cur) renderNow(); else renderPlayState();
-setTimeout(() => rapIndex().catch(() => {}), 1500);
+setTimeout(() => (window.requestIdleCallback || setTimeout)(() => rapIndex().catch(() => {})), 4000);
 files.loadCovers().then(() => { if (P.cur && P.cur.src === 'local') renderNow(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

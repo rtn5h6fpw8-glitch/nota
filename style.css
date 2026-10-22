@@ -1,3 +1,4 @@
+@font-face { font-family: 'Bowlby One'; src: url('fonts/bowlby-note.woff2') format('woff2'); font-display: swap; unicode-range: U+004E, U+006F, U+0074, U+0065; }
 /* Layout: native-feeling column, bottom tab bar on phones, sidebar from 900px. Monochrome UI, one accent for state. */
 :root {
   --bg: #ffffff;
@@ -65,7 +66,7 @@ main {
 .back svg { width: 24px; height: 24px; }
 
 /* sections */
-.section { margin-top: 30px; }
+.section { margin-top: 30px; content-visibility: auto; contain-intrinsic-size: auto 320px; }
 .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .sec-head h2 { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 700; letter-spacing: -.018em; }
 .sec-head a, .sec-head button.more { display: inline-flex; align-items: center; color: var(--fg-2); font-size: 15px; gap: 1px; }
@@ -136,6 +137,7 @@ img[onload]:not(.in) { opacity: 0; }
 .meta small { display: block; color: var(--fg-2); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row.playing .meta b { color: var(--accent); }
 .tail { display: flex; align-items: center; color: var(--fg-2); font-size: 14px; font-variant-numeric: tabular-nums; }
+.chev-tail::after { content: ""; width: 8px; height: 8px; border-top: 2px solid var(--fg-3); border-right: 2px solid var(--fg-3); transform: rotate(45deg); margin-right: 4px; }
 .dots { width: 36px; height: 40px; display: grid; place-items: center; color: var(--fg); margin-right: -8px; }
 .dots svg { width: 18px; height: 18px; }
 .list.numbered .row::after { left: 34px; }
@@ -237,7 +239,7 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px));
   padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
-  background: var(--glass); -webkit-backdrop-filter: saturate(180%) blur(24px); backdrop-filter: saturate(180%) blur(24px);
+  background: var(--glass); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
   border-top: .5px solid var(--line);
 }
 .tabs .brand { display: none; }
@@ -250,7 +252,7 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
   position: fixed; z-index: 19; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px));
   bottom: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px) + 8px); height: var(--mini-h);
   display: flex; align-items: center; gap: 2px; padding: 0 8px; border-radius: 14px; overflow: hidden;
-  background: var(--glass); -webkit-backdrop-filter: saturate(180%) blur(24px); backdrop-filter: saturate(180%) blur(24px);
+  background: var(--glass); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
   box-shadow: var(--shadow), inset 0 0 0 .5px var(--line);
 }
 .mini-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; height: 100%; text-align: left; }
@@ -343,7 +345,7 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 .sheet .act.danger, .sheet .act.danger svg { color: #e5383b; }
 .sheet form { display: grid; gap: 12px; padding-top: 12px; }
 .sheet-cancel { width: 100%; height: 50px; margin-top: 12px; border-radius: 12px; background: var(--surface); font-size: 17px; font-weight: 600; }
-.toast { position: fixed; z-index: 70; left: 50%; transform: translateX(-50%); bottom: calc(var(--tab-h) + var(--mini-h) + env(safe-area-inset-bottom, 0px) + 26px); padding: 11px 18px; border-radius: 14px; background: var(--glass); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); box-shadow: var(--shadow), inset 0 0 0 .5px var(--line); font-size: 14px; font-weight: 500; max-width: calc(100% - 40px); text-align: center; animation: fade .2s; }
+.toast { position: fixed; z-index: 70; left: 50%; transform: translateX(-50%); bottom: calc(var(--tab-h) + var(--mini-h) + env(safe-area-inset-bottom, 0px) + 26px); padding: 11px 18px; border-radius: 14px; background: var(--glass); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); box-shadow: var(--shadow), inset 0 0 0 .5px var(--line); font-size: 14px; font-weight: 500; max-width: calc(100% - 40px); text-align: center; animation: fade .2s; }
 
 /* ---------------- wider screens ---------------- */
 @media (min-width: 600px) {
