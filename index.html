@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Нота</title>
+<meta name="description" content="Бесплатная музыка: альбомы Internet Archive, Jamendo, интернет-радио, YouTube и ваши файлы.">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f0f12" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Нота">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="tabs" aria-label="Разделы">
+    <div class="brand"><img src="icon.svg" alt=""><span>Нота</span></div>
+    <a href="#home" data-tab="home"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span>Слушать</span></a>
+    <a href="#radio" data-tab="radio"><svg viewBox="0 0 24 24"><path d="M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM6.3 6.3a8 8 0 0 0 0 11.4l1.4-1.4a6 6 0 0 1 0-8.6zm11.4 0-1.4 1.4a6 6 0 0 1 0 8.6l1.4 1.4a8 8 0 0 0 0-11.4z"/></svg><span>Радио</span></a>
+    <a href="#library" data-tab="library"><svg viewBox="0 0 24 24"><path d="M4 4h2v16H4zm4 0h2v16H8zm5.2.6 1.9-.6 4.9 15.3-1.9.6z"/></svg><span>Медиатека</span></a>
+    <a href="#search" data-tab="search"><svg viewBox="0 0 24 24"><path d="M10 3a7 7 0 0 1 5.6 11.2l5.1 5.1-1.4 1.4-5.1-5.1A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg><span>Поиск</span></a>
+  </nav>
+
+  <main id="view" tabindex="-1"></main>
+
+  <div class="mini" id="mini" hidden>
+    <button class="mini-open" id="miniOpen" aria-label="Открыть плеер">
+      <img id="miniArt" alt="">
+      <span class="mini-text"><b id="miniTitle"></b><small id="miniArtist"></small></span>
+    </button>
+    <button class="icon-btn" id="miniPlay" aria-label="Пауза"></button>
+    <button class="icon-btn" id="miniNext" aria-label="Следующий"><svg viewBox="0 0 24 24"><path d="M5 5v14l9-7zm9 0v14l9-7z" transform="scale(.9) translate(1 1)"/></svg></button>
+    <div class="mini-progress"><i id="miniBar"></i></div>
+  </div>
+</div>
+
+<section class="player" id="player" hidden aria-label="Сейчас играет">
+  <div class="player-bg" id="playerBg"></div>
+  <div class="player-inner">
+    <button class="grabber" id="playerClose" aria-label="Свернуть плеер"><span></span></button>
+    <div class="stage" id="stage"><img id="bigArt" alt=""></div>
+    <div class="now">
+      <div class="now-text"><h2 id="bigTitle"></h2><p id="bigArtist"></p></div>
+      <button class="icon-btn" id="bigLike" aria-label="В избранное"></button>
+      <button class="icon-btn" id="bigMore" aria-label="Ещё"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+    </div>
+    <div class="seek" id="seekWrap">
+      <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Позиция">
+      <div class="times"><span id="tCur">0:00</span><span id="tLive" hidden>● ПРЯМОЙ ЭФИР</span><span id="tDur">0:00</span></div>
+    </div>
+    <div class="controls">
+      <button class="icon-btn small" id="shuffle" aria-label="Перемешать"><svg viewBox="0 0 24 24"><path d="M17 3l4 4-4 4V8h-2.6l-7 8H4v-2h2.6l7-8H17zm0 10l4 4-4 4v-3h-3.4l-2.3-2.6 1.3-1.5 1.9 2.1H17zM4 6h3.4l2.3 2.6-1.3 1.5L6.6 8H4z"/></svg></button>
+      <button class="icon-btn big" id="prev" aria-label="Предыдущий"><svg viewBox="0 0 24 24"><path d="M19 5v14l-9-7zM10 5v14l-9-7z" transform="scale(.9) translate(2 1)"/></svg></button>
+      <button class="icon-btn huge" id="play" aria-label="Играть"></button>
+      <button class="icon-btn big" id="next" aria-label="Следующий"><svg viewBox="0 0 24 24"><path d="M5 5v14l9-7zm9 0v14l9-7z" transform="scale(.9) translate(1 1)"/></svg></button>
+      <button class="icon-btn small" id="repeat" aria-label="Повтор"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2z"/></svg></button>
+    </div>
+    <div class="queue-head"><h3>Далее</h3><button class="link" id="clearQueue">Очистить</button></div>
+    <ol class="queue" id="queue"></ol>
+  </div>
+</section>
+
+<div class="sheet-wrap" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <h3 id="sheetTitle"></h3>
+    <div id="sheetBody"></div>
+    <button class="sheet-cancel" id="sheetCancel">Отмена</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<input type="file" id="filePick" accept="audio/*" multiple hidden>
+<audio id="audio" preload="metadata" playsinline></audio>
+
+<script src="app.js"></script>
+</body>
+</html>
