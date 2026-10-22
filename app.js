@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '16 · 22.10.2026';
+const APP_VERSION = '17 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -564,29 +564,16 @@ const full = {
     return b ? b.yt.value : '';
   },
   on() { return lib.settings.full !== false; },
-  /* with the viewer's own YouTube key, search YouTube directly: finds almost every song */
-  async ytSearch(title, artist) {
-    const key = lib.settings.ytKey;
-    if (!key) return '';
-    const p = new URLSearchParams({ part: 'snippet', type: 'video', videoEmbeddable: 'true', maxResults: '3', q: `${artist} ${title} official`, key });
-    const d = await getJSONOnce('https://www.googleapis.com/youtube/v3/search?' + p, 10000);
-    const items = (d.items || []).filter((x) => x.id && x.id.videoId);
-    const a = norm(artist);
-    const best = items.find((x) => norm(x.snippet.channelTitle).includes(a) || /vevo|topic/i.test(x.snippet.channelTitle)) || items[0];
-    return best ? best.id.videoId : '';
-  },
   find(t, urgent) {
     const u = !!urgent;
-    return cached((lib.settings.ytKey ? 'fullk:' : 'full:') + t.dzId, async () => {
+    return cached('full:' + t.dzId, async () => {
       const x = await deezer.get(`track/${t.dzId}`);
       t.url = x.preview; t.at = Date.now();
-      if (x.isrc && !lib.settings.ytKey) {
+      if (x.isrc) {
         const d = await this.mb(`isrc/${x.isrc}?inc=url-rels`, u).catch(() => null);
         for (const r of (d && d.recordings) || []) { const id = this.ytFrom(r.relations); if (id) return id; }
       }
       const title = this.clean(x.title_short || t.title), artist = x.artist ? x.artist.name : t.artist;
-      const k = await this.ytSearch(title, artist).catch(() => '');
-      if (k) return k;
       const w = await this.wikidata(title, artist).catch(() => '');
       if (w) return w;
       const s = await this.mb(`recording?query=${encodeURIComponent(`recording:"${title}" AND artist:"${artist}"`)}&limit=4`, u).catch(() => null);
@@ -652,7 +639,7 @@ const P = {
       const id = await known.catch(() => '');
       if (this.queue[this.idx] !== t) return;
       if (id) { t.ytId = id; t.full = true; }
-      else toast('Полной версии не нашлось, играет превью 30 с');
+      else toast('Полная версия есть только на YouTube: кнопка в плеере');
       full.warm(this.queue.slice(this.idx + 1, this.idx + 3));
     }
     if (isVideo(t)) {
@@ -753,7 +740,8 @@ window.addEventListener('message', (e) => {
   if (d && d.event === 'onError' && P.cur && P.cur.full) {
     const t = P.cur;
     t.full = false; stopYT();
-    toast('Видео недоступно, играет превью 30 с');
+    if (t.dzId) { disk.write('full:' + t.dzId, ''); memo.set('full:' + t.dzId, ready('')); }
+    toast('Лейбл запретил показ здесь. Полностью — кнопкой «YouTube» в плеере');
     deezer.fresh(t).then((u) => { audio.src = u; renderNow(); audio.play().catch(() => {}); }).catch(() => P.skipAfterError());
     return;
   }
@@ -812,6 +800,9 @@ function renderNow() {
   $('#tLive').hidden = !t.live;
   $('#tCur').style.visibility = $('#tDur').style.visibility = t.live ? 'hidden' : '';
   $('#seekWrap').hidden = video;
+  const yf = $('#ytFull');
+  yf.hidden = !(t.preview && !t.full);
+  if (!yf.hidden) yf.href = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(`${t.artist} ${t.title}`);
   refreshLike();
   setSession(t);
   renderPlayState();
@@ -1078,7 +1069,7 @@ function row(t, i, key, o = {}) {
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
     : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span>`;
-  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : t.preview ? (full.on() ? '<span class="tag">YouTube</span>' : '<span class="tag">30 с</span>') : '') + esc(t.artist || '');
+  const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.src === 'youtube' ? '<span class="tag">Видео</span>' : t.preview ? '<span class="tag">30 с</span>' : '') + esc(t.artist || '');
   const dur = !o.noDur && !t.live && t.duration ? fmt(t.duration) : '';
   const q = o.q != null ? ` data-q="${o.q}"` : '';
   return `<li class="row" data-id="${esc(t.id)}"><button class="hit" data-play="${key}" data-i="${i}"${q}>${lead}<span class="meta"><b>${esc(t.title)}</b>${sub ? `<small>${sub}</small>` : ''}</span></button><span class="tail">${o.showDur ? dur : ''}<button class="dots" data-more="${key}" data-i="${i}"${q} aria-label="Действия">${I.more}</button></span></li>`;
@@ -1547,11 +1538,8 @@ const views = {
       <div class="group"><h3>Internet Archive</h3><p class="note">Независимые лейблы, живые концерты, старые пластинки.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Radio Browser</h3><p class="note">Около 50 000 интернет-радиостанций из 200 стран.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>YouTube</h3><p class="note">Вставьте ссылку на видео в поиск. Видео играет в официальном плеере и остаётся на экране.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>Полные версии песен звёзд</h3><p class="note">Песни артистов крупных лейблов играют целиком в официальном плеере YouTube, видео остаётся на экране. Нужное видео ищется через открытые базы MusicBrainz и Wikidata. Если его нет, играет превью 30 секунд. На iPhone видео останавливается, когда экран гаснет.</p>
-        <label class="state" style="font-size:15px;color:var(--fg)"><input type="checkbox" id="fullOn" ${full.on() ? 'checked' : ''}> Играть полные версии</label>
-        <p class="note">Без ключа видео находится примерно для трети песен. С бесплатным ключом YouTube — почти для всех. Ключ хранится только на этом устройстве.</p>
-        <input class="text" id="ytKey" placeholder="Ключ YouTube API" autocomplete="off" value="${esc(lib.settings.ytKey || '')}">
-        <button class="btn solid" id="ytKeySave">Сохранить ключ</button></div>
+      <div class="group"><h3>Полные версии песен звёзд</h3><p class="note">Если официальное видео песни можно показывать в других приложениях, песня играет целиком прямо здесь, в плеере YouTube. Большинство лейблов это запрещает: тогда играет превью 30 секунд, а кнопка «Полностью на YouTube» в плеере открывает песню целиком в приложении YouTube.</p>
+        <label class="state" style="font-size:15px;color:var(--fg)"><input type="checkbox" id="fullOn" ${full.on() ? 'checked' : ''}> Играть полные версии</label></div>
       <form class="group" id="jmForm"><h3>Jamendo</h3>
         <p class="note">Ещё около 600 000 треков. Нужен бесплатный ключ: зарегистрируйтесь на <a class="text-btn" href="https://devportal.jamendo.com/" target="_blank" rel="noopener">devportal.jamendo.com</a>, создайте приложение и вставьте его Client ID.</p>
         <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(lib.settings.jamendo)}">
@@ -1564,13 +1552,6 @@ const views = {
       lib.settings.jamendo = key; lib.save('settings');
       if (!key) return toast('Jamendo отключён');
       try { await jamendo.tracks({ limit: 1 }); toast('Jamendo подключён'); } catch { toast('Ключ не подошёл'); }
-    };
-    $('#ytKeySave').onclick = async () => {
-      const key = $('#ytKey').value.trim();
-      lib.settings.ytKey = key; lib.save('settings');
-      if (!key) return toast('Ключ удалён');
-      try { const id = await full.ytSearch('Runaway', 'Kanye West'); toast(id ? 'Ключ работает: полные версии найдутся почти для всех песен' : 'Ключ сохранён, но поиск ничего не вернул'); }
-      catch { toast('Ключ не подошёл. Проверьте, что включён YouTube Data API v3'); }
     };
     $('#fullOn').onchange = (e) => { lib.settings.full = e.target.checked; lib.save('settings'); toast(e.target.checked ? 'Полные версии включены' : 'Будут играть превью'); };
     $('#wipe').onclick = () => { lib.recent = []; lib.searches = []; lib.save('recent'); lib.save('searches'); toast('История очищена'); };

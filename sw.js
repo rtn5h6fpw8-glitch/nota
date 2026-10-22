@@ -1,6 +1,6 @@
 // The app shell is taken from the network first, so updates show up at once; the saved copy is used only offline.
 // Artwork is cached after the first view.
-const VERSION = 'note-v16';
+const VERSION = 'note-v17';
 const CACHE = 'shell-' + VERSION;
 const IMG = 'nota-img-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest', 'fonts/bowlby-note.woff2'];
