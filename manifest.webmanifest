@@ -1,7 +1,7 @@
 {
   "name": "Нота",
   "short_name": "Нота",
-  "description": "Бесплатная музыка: Internet Archive, Jamendo, интернет-радио, YouTube и ваши файлы.",
+  "description": "Бесплатная музыка со всего мира: артисты и альбомы Audius и Internet Archive, интернет-радио, YouTube и ваши файлы.",
   "lang": "ru",
   "start_url": "./#home",
   "scope": "./",
