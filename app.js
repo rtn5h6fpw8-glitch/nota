@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '23 · 22.10.2026';
+const APP_VERSION = '24 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1220,6 +1220,8 @@ playerEl.addEventListener('touchend', () => {
   const back = 'transform .3s cubic-bezier(.25,.8,.3,1)';
   playerEl.style.transition = back; playerEl.style.transform = '';
 });
+/* no pinch zoom (double-tap zoom is turned off in CSS, so quick double taps on buttons still work) */
+document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input, textarea')) return;
   if (e.code === 'Space') { e.preventDefault(); P.toggle(); }

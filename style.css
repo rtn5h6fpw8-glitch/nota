@@ -40,6 +40,9 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; }
+/* no double-tap zoom anywhere in the app */
+html, body, button, a, input, .row, .card, .tile { touch-action: manipulation; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   background: var(--bg); color: var(--fg);
   font: 15px/1.38 var(--font); letter-spacing: -.005em;
