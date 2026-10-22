@@ -360,6 +360,7 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
     top: 0; right: auto; width: 240px; height: auto; display: flex; flex-direction: column; gap: 2px; padding: 22px 12px;
     border-top: 0; border-right: .5px solid var(--line); background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none;
   }
+  .tabs .brand .wordmark { font-family: 'Bowlby One', var(--font); font-weight: 400; font-size: 22px; letter-spacing: .01em; transform: skewX(-10deg); display: inline-block; }
   .tabs .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 22px; font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
   .tabs a { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 0 10px; height: 36px; border-radius: 8px; font-size: 15px; color: var(--fg); }
   .tabs a svg { width: 20px; height: 20px; color: var(--accent); }
