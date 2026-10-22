@@ -1,5 +1,7 @@
 'use strict';
 
+const APP_VERSION = '14 · 22.10.2026';
+
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -1455,6 +1457,7 @@ const views = {
         <p class="note">Ещё около 600 000 треков. Нужен бесплатный ключ: зарегистрируйтесь на <a class="text-btn" href="https://devportal.jamendo.com/" target="_blank" rel="noopener">devportal.jamendo.com</a>, создайте приложение и вставьте его Client ID.</p>
         <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(lib.settings.jamendo)}">
         <button class="btn solid" type="submit">Сохранить</button></form>
+      <p class="note" style="margin-top:18px">Версия ${APP_VERSION}</p>
       <div class="group"><h3>Данные</h3><p class="note">Избранное, плейлисты и файлы хранятся только в этом браузере.</p><button class="btn" id="wipe">Очистить историю</button></div>`;
     $('#jmForm').onsubmit = async (e) => {
       e.preventDefault();
