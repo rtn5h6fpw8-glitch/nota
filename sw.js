@@ -1,11 +1,18 @@
-// App shell is served from cache and refreshed in the background; artwork is cached after the first view.
-const CACHE = 'nota-v12';
+// The app shell is taken from the network first, so updates show up at once; the saved copy is used only offline.
+// Artwork is cached after the first view.
+const VERSION = 'note-v13';
+const CACHE = 'shell-' + VERSION;
 const IMG = 'nota-img-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest', 'fonts/bowlby-note.woff2'];
-self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE && k !== IMG).map((k) => caches.delete(k)))));
-  self.clients.claim();
+  e.waitUntil((async () => {
+    const old = (await caches.keys()).filter((k) => k !== CACHE && k !== IMG);
+    await Promise.all(old.map((k) => caches.delete(k)));
+    await self.clients.claim();
+    // pages still running the previous version reload into the new one
+    if (old.length) for (const c of await self.clients.matchAll({ type: 'window' })) c.navigate(c.url).catch(() => {});
+  })());
 });
 async function trim() {
   const c = await caches.open(IMG);
@@ -17,12 +24,16 @@ self.addEventListener('fetch', (e) => {
   if (r.method !== 'GET') return;
   const u = new URL(r.url);
   if (u.origin === location.origin) {
-    e.respondWith(caches.open(CACHE).then(async (c) => {
-      const hit = await c.match(r, { ignoreSearch: true });
-      const net = fetch(r).then((res) => { if (res.ok) c.put(r, res.clone()); return res; });
-      if (hit) { e.waitUntil(net.catch(() => {})); return hit; }
-      return net;
-    }));
+    e.respondWith((async () => {
+      const c = await caches.open(CACHE);
+      try {
+        const res = await Promise.race([fetch(r, { cache: 'no-cache' }), new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), 3000))]);
+        if (res.ok) c.put(r, res.clone());
+        return res;
+      } catch {
+        return (await c.match(r, { ignoreSearch: true })) || (r.mode === 'navigate' ? c.match('./') : Response.error());
+      }
+    })());
     return;
   }
   if (r.destination === 'image') {

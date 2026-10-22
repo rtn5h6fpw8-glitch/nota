@@ -1630,4 +1630,12 @@ route();
 if (P.cur) renderNow(); else renderPlayState();
 setTimeout(() => (window.requestIdleCallback || setTimeout)(() => rapIndex().catch(() => {})), 4000);
 files.loadCovers().then(() => { if (P.cur && P.cur.src === 'local') renderNow(); });
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const had = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded) { reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    /* look for a new version every time the app comes back to the screen */
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
