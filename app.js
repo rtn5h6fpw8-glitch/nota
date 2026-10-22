@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '21 · 22.10.2026';
+const APP_VERSION = '22 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -145,7 +145,27 @@ const lib = {
   artists: store.get('artists', []),
   searches: store.get('searches', []),
   settings: store.get('settings', { jamendo: '' }),
+  hidden: (() => {
+    const h = store.get('hidden', null) || { albums: [], tracks: [], artists: [] };
+    /* album the owner asked to remove (cover not suitable for the app) */
+    if (!h.seeded) {
+      h.seeded = true;
+      h.albums.push('VRK9xMQ');
+      h.tracks.push(...['ryaoRKN', 'Qbdo8p1', '2GR5MNZ', '0dJ8K1M', 'RNq4Zyw', 'laVB0l6', 'ljqm78N', 'YavJyBp', 'NolA7Mx', 'Wg5q12Z', 'ByvQybY', '805wG39'].map((x) => 'au:' + x));
+      store.set('hidden', h);
+    }
+    return h;
+  })(),
   save(k) { store.set(k, this[k]); },
+  isHidden(x) {
+    if (!x) return false;
+    const h = this.hidden;
+    if ((x.kind === 'au-album' || x.kind === 'dz-album' || x.kind === 'ia-album') && h.albums.includes(String(x.id))) return true;
+    if (x.kind === 'artist' && h.artists.includes(x.id)) return true;
+    if (!x.kind && (h.tracks.includes(x.id) || (x.artistId && h.artists.includes(x.artistId)) || (x.alId && h.albums.includes(x.alId)))) return true;
+    return false;
+  },
+  hide(kind, ids) { for (const id of ids) if (!this.hidden[kind].includes(id)) this.hidden[kind].push(id); this.save('hidden'); },
   isLiked(id) { return this.liked.some((t) => t.id === id); },
   toggleLike(t) {
     if (this.isLiked(t.id)) { this.liked = this.liked.filter((x) => x.id !== t.id); toast('Удалено из избранного'); }
@@ -653,12 +673,22 @@ audio.volume = store.get('volume', 1);
 const P = {
   queue: store.get('queue', []).filter((t) => t.src !== 'youtube'),
   idx: store.get('idx', -1),
+  /* drop hidden songs from a saved queue, keeping the current song when it stays */
+  clean() {
+    const cur = this.queue[this.idx];
+    this.queue = this.queue.filter((t) => !lib.isHidden(t));
+    this.idx = cur ? this.queue.indexOf(cur) : -1;
+  },
   shuffle: store.get('shuffle', false),
   repeat: store.get('repeat', 'off'),
   errors: 0,
   get cur() { return this.queue[this.idx]; },
   persist() { store.set('queue', this.queue.map(slim)); store.set('idx', this.idx); },
   setQueue(list, i = 0) {
+    const pick = list[i];
+    list = list.filter((t) => !lib.isHidden(t));
+    i = Math.max(0, list.indexOf(pick));
+    if (!list.length) return;
     let q = list.map((t) => ({ ...t }));
     if (this.shuffle && q.length > 1) { const pick = q.splice(i, 1)[0]; q = [pick, ...shuffled(q)]; i = 0; }
     this.queue = q;
@@ -1223,6 +1253,7 @@ function trackSheet(t, { playlistId, q, fileView } = {}) {
   if (t.src === 'local') l.push({ label: 'Открыть папку артиста', icon: I.folder, fn: () => { closePlayer(); go('#mine-artist/' + encodeURIComponent(t.albumArtist || t.artist)); } });
   if (t.dzArtist) l.push({ label: 'Перейти к артисту', icon: I.person, fn: () => { closePlayer(); go('#dz/' + t.dzArtist); } });
   if (t.dzAlbum) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#dza/' + t.dzAlbum); } });
+  if (t.src === 'audius' || t.src === 'deezer') l.push({ label: 'Скрыть трек', icon: I.trash, fn: () => { lib.hide('tracks', [t.id]); toast('Трек скрыт'); route(); } });
   if (playlistId) l.push({ label: 'Удалить из плейлиста', icon: I.trash, danger: true, fn: () => { const p = lib.playlists.find((x) => x.id === playlistId); if (p) { p.tracks = p.tracks.filter((x) => x.id !== t.id); lib.save('playlists'); route(); } } });
   if (fileView) l.push({ label: 'Удалить файл', icon: I.trash, danger: true, fn: async () => { await files.del(t.localKey); toast('Файл удалён'); route(); } });
   openSheet(sheetTitle(t), acts(l));
@@ -1258,6 +1289,7 @@ let ctxSeq = 0;
 const reg = (list) => { const k = 'l' + ++ctxSeq; ctx[k] = list; return k; };
 
 function row(t, i, key, o = {}) {
+  if (lib.isHidden(t)) return '';
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
     : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span>`;
@@ -1273,14 +1305,17 @@ function rows(list, o = {}) {
 }
 const hrefOf = (a) => a.kind === 'dz-artist' ? `#dz/${a.id}` : a.kind === 'dz-album' ? `#dza/${a.id}` : a.kind === 'artist' ? `#artist/${a.id}` : a.kind === 'au-album' ? `#al/${a.id}` : `#album/${encodeURIComponent(a.id)}`;
 function card(a) {
+  if (lib.isHidden(a)) return '';
   const round = a.kind === 'artist' || a.kind === 'dz-artist';
   const t2 = a.kind === 'dz-artist' ? (a.fans ? fmtCount(a.fans) + ' поклонников' : 'Артист') : round ? (a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист') : a.kind === 'dz-album' ? [a.year, a.artist].filter(Boolean).join(' · ') : a.artist || a.year || '';
   return `<a class="card${round ? ' center' : ''}" href="${hrefOf(a)}"><div class="art${round ? ' round' : ''}">${a.kind === 'ia-album' ? sleeve(a.art) : round ? img(a.avatar, true, a.avatarBig, '(min-width: 600px) 140px, 30vw') : img(a.art, false, a.artBig)}</div><span class="t1">${esc(round ? a.name : a.title)}</span><span class="t2">${esc(t2)}</span></a>`;
 }
 function playCard(t, k, i) {
+  if (lib.isHidden(t)) return '';
   return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${t.live ? img(t.art) : img(t.art, false, t.artBig)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
 }
 function feature(a, eyebrow) {
+  if (lib.isHidden(a)) return '';
   return `<a class="feature" href="${hrefOf(a)}"><div><div class="eyebrow">${esc(eyebrow)}</div><div class="ft">${esc(a.title)}</div><div class="fs">${esc(a.artist || '')}</div></div><div class="art">${img(a.art, false, a.artBig, '(min-width: 600px) 380px, 92vw')}</div></a>`;
 }
 function section(title, inner, href) {
@@ -1353,7 +1388,7 @@ const trendingWeek = () => cached('au-trend-week', () => audius.trending({ limit
 function artistsOf(tracks, n = 14) {
   const seen = new Set(), out = [];
   for (const t of tracks) {
-    if (!t.by || seen.has(t.by.id)) continue;
+    if (!t.by || seen.has(t.by.id) || lib.hidden.artists.includes(t.by.id)) continue;
     seen.add(t.by.id);
     out.push({ kind: 'artist', id: t.by.id, name: t.by.name, avatar: t.by.avatar, avatarBig: t.by.avatarBig, followers: t.by.followers });
     if (out.length >= n) break;
@@ -1483,7 +1518,10 @@ const views = {
         <h1>${esc(a.title)}</h1>${a.artistId ? `<a class="by" href="#artist/${a.artistId}">${esc(a.artist)}</a>` : `<div class="by">${esc(a.artist)}</div>`}
         <div class="info">${[a.isAlbum ? 'Альбом' : 'Плейлист', year].filter(Boolean).join(' · ')}</div></div></div>` +
         (a.tracks.length ? playActions(k) + rows(a.tracks, { key: k, numbered: a.isAlbum, showDur: true, sub: a.isAlbum ? () => '' : null }) : '<div class="empty"><b>Нет доступных треков</b></div>') +
+        `<div class="actions"><button class="btn" id="hideAlbum" style="grid-column:1/-1;color:var(--fg-2)">${I.trash}Скрыть этот ${a.isAlbum ? 'альбом' : 'плейлист'}</button></div>` +
         `<p class="foot">${tracksWord(a.tracks.length)}${total ? ', ' + fmtLong(total) : ''}</p>` + (a.desc ? `<p class="desc">${esc(a.desc)}</p>` : '');
+      const hb = $('#hideAlbum');
+      if (hb) hb.onclick = () => { lib.hide('albums', [a.id]); lib.hide('tracks', a.tracks.map((x) => x.id)); toast('Скрыто. Вернуть можно в «Источниках»'); history.length > 1 ? history.back() : go('#home'); };
       markPlaying();
     }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть альбом.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
@@ -1731,6 +1769,7 @@ const views = {
         <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(lib.settings.jamendo)}">
         <button class="btn solid" type="submit">Сохранить</button></form>
       <p class="note" style="margin-top:18px">Версия ${APP_VERSION}</p>
+      <div class="group"><h3>Скрытое</h3><p class="note">Альбомы: ${lib.hidden.albums.length}, треки: ${lib.hidden.tracks.length}. Скрытое не показывается нигде в приложении.</p><button class="btn" id="unhide">Показать всё скрытое</button></div>
       <div class="group"><h3>Данные</h3><p class="note">Избранное, плейлисты и файлы хранятся только в этом браузере.</p><button class="btn" id="wipe">Очистить историю</button></div>`;
     $('#jmForm').onsubmit = async (e) => {
       e.preventDefault();
@@ -1739,6 +1778,7 @@ const views = {
       if (!key) return toast('Jamendo отключён');
       try { await jamendo.tracks({ limit: 1 }); toast('Jamendo подключён'); } catch { toast('Ключ не подошёл'); }
     };
+    $('#unhide').onclick = () => { lib.hidden = { albums: [], tracks: [], artists: [], seeded: true }; lib.save('hidden'); toast('Скрытое снова видно'); route(); };
     $('#wipe').onclick = () => { lib.recent = []; lib.searches = []; lib.save('recent'); lib.save('searches'); toast('История очищена'); };
   },
 };
@@ -1939,6 +1979,7 @@ async function seedCache() {
   } catch {}
 }
 await seedCache();
+P.clean();
 route();
 setLyricsOpen(lyr.open);
 if (P.cur) renderNow(); else renderPlayState();
