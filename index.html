@@ -14,6 +14,9 @@
 <link rel="preconnect" href="https://api.audius.co" crossorigin>
 <link rel="preconnect" href="https://archive.org" crossorigin>
 <link rel="preconnect" href="https://de1.api.radio-browser.info" crossorigin>
+<link rel="preconnect" href="https://cdn-images.dzcdn.net">
+<link rel="dns-prefetch" href="https://api.deezer.com">
+<link rel="dns-prefetch" href="https://cdnt-preview.dzcdn.net">
 <link rel="dns-prefetch" href="https://creatornode.audius.co">
 <link rel="modulepreload" href="app.js">
 <link rel="manifest" href="manifest.webmanifest">
@@ -31,6 +34,7 @@
   <a href="#search" data-tab="search"><svg viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 0 1 6 12l4.8 4.8-1.5 1.5-4.8-4.8A7.5 7.5 0 1 1 10.5 3zm0 2.1a5.4 5.4 0 1 0 0 10.8 5.4 5.4 0 0 0 0-10.8z"/></svg><span>Поиск</span></a>
 </nav>
 
+<div class="topnav" id="topnav" aria-hidden="true"><span id="topnavTitle"></span></div>
 <main id="view" tabindex="-1"></main>
 
 <div class="mini" id="mini" hidden>
@@ -54,7 +58,7 @@
       <button class="now-btn" id="bigMore" aria-label="Ещё"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>
     </div>
     <div class="seek" id="seekWrap">
-      <div class="seekbar" id="seek" role="slider" tabindex="0" aria-label="Позиция" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="seek-track"><div class="seek-fill" id="seekFill"></div></div></div>
+      <div class="seekbar" id="seek" role="slider" tabindex="0" aria-label="Позиция" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="seek-bubble" id="seekBubble">0:00</span><div class="seek-track"><div class="seek-fill" id="seekFill"></div></div></div>
       <div class="times"><span id="tCur">0:00</span><span id="tLive" hidden>Прямой эфир</span><span id="tDur">0:00</span></div>
     </div>
     <div class="controls">

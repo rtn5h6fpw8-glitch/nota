@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '19 · 22.10.2026';
+const APP_VERSION = '20 · 22.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -646,6 +646,7 @@ const deezer = {
 
 /* ======================= player ======================= */
 const audio = $('#audio');
+audio.preload = 'auto';
 /* a song that is one stretch of a longer file (cue sheet): start and end in seconds */
 let seg = null;
 audio.volume = store.get('volume', 1);
@@ -731,25 +732,56 @@ const P = {
 };
 function shuffled(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-audio.addEventListener('play', renderPlayState);
-audio.addEventListener('pause', renderPlayState);
-audio.addEventListener('playing', () => { P.errors = 0; renderPlayState(); preloadNext(); });
+audio.addEventListener('play', () => { renderPlayState(); startTick(); });
+audio.addEventListener('pause', () => { setBuffering(false); renderPlayState(); renderTime(); syncPosition(); });
+audio.addEventListener('playing', () => { P.errors = 0; setBuffering(false); renderPlayState(); preloadNext(); startTick(); syncPosition(); });
+audio.addEventListener('waiting', () => setBuffering(true));
+audio.addEventListener('stalled', () => { if (!audio.paused) setBuffering(true); });
+audio.addEventListener('canplay', () => setBuffering(false));
+audio.addEventListener('seeked', () => { pendingSeek = null; renderTime(); syncPosition(); });
+audio.addEventListener('ratechange', syncPosition);
+/* the progress bar moves every frame while music plays, not four times a second */
+let rafId = 0;
+function tick() {
+  rafId = 0;
+  if (audio.paused) return;
+  if (seg && seg.end && audio.currentTime >= seg.end - 0.12) { P.next(true); return; }
+  renderTime();
+  rafId = requestAnimationFrame(tick);
+}
+function startTick() { if (!rafId && !document.hidden) rafId = requestAnimationFrame(tick); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderTime(); startTick(); } });
+function setBuffering(on) {
+  $('#play').classList.toggle('buffering', on);
+  $('#miniPlay').classList.toggle('buffering', on);
+}
+/* lock screen and Control Center show the real position and can scrub */
+function syncPosition() {
+  try {
+    if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+    const d = seekDur();
+    if (!d || !isFinite(d) || (P.cur && P.cur.live)) { navigator.mediaSession.setPositionState(); return; }
+    navigator.mediaSession.setPositionState({ duration: d, position: Math.min(d, Math.max(0, audio.currentTime - segStart())), playbackRate: audio.playbackRate || 1 });
+  } catch {}
+}
 /* warm up the next track so it starts without a pause */
 const nextAudio = new Audio();
 nextAudio.preload = 'auto';
 nextAudio.muted = true;
 function preloadNext() {
   const n = P.queue[P.idx + 1];
-  if (!n || !n.url || n.live || n.src === 'local' || n.src === 'deezer' || nextAudio.dataset.id === n.id) return;
+  if (!n || n.live || n.src === 'local' || nextAudio.dataset.id === n.id) return;
   nextAudio.dataset.id = n.id;
-  nextAudio.src = n.url;
+  if (n.src === 'deezer') { deezer.fresh(n).then((u) => { if (nextAudio.dataset.id === n.id) nextAudio.src = u; }).catch(() => {}); return; }
+  if (n.url) nextAudio.src = n.url;
 }
 audio.addEventListener('ended', () => P.next(true));
+/* backup for when frames are paused (screen locked): songs inside one long file still end on time */
 audio.addEventListener('timeupdate', () => {
   if (seg && seg.end && audio.currentTime >= seg.end - 0.15) { P.next(true); return; }
-  renderTime();
+  if (document.hidden) syncPosition(); else if (!rafId) renderTime();
 });
-audio.addEventListener('durationchange', renderTime);
+audio.addEventListener('durationchange', () => { renderTime(); syncPosition(); });
 audio.addEventListener('error', () => {
   const t = P.cur;
   if (!t || !audio.getAttribute('src')) return;
@@ -774,7 +806,9 @@ if ('mediaSession' in navigator) {
   h('pause', () => P.toggle());
   h('nexttrack', () => P.next());
   h('previoustrack', () => P.prev());
-  h('seekto', (d) => { if (P.cur && !P.cur.live && d.seekTime != null) audio.currentTime = (seg ? seg.start : 0) + d.seekTime; });
+  h('seekto', (d) => { if (P.cur && !P.cur.live && d.seekTime != null) seekTo(d.seekTime); });
+  h('seekforward', (d) => { if (P.cur && !P.cur.live) seekTo(audio.currentTime - segStart() + (d.seekOffset || 10)); });
+  h('seekbackward', (d) => { if (P.cur && !P.cur.live) seekTo(audio.currentTime - segStart() - (d.seekOffset || 10)); });
 }
 
 /* ---------- player UI ---------- */
@@ -789,7 +823,10 @@ function renderNow() {
   $('#miniArt').src = art;
   $('#bigArt').src = big;
   $('#stage').classList.toggle('logo', !!t.live);
-  $('#bigTitle').textContent = t.title;
+  const bt = $('#bigTitle');
+  bt.innerHTML = `<span>${esc(t.title)}</span>`;
+  bt.classList.remove('marquee');
+  requestAnimationFrame(() => { const sp = bt.firstChild; if (sp && sp.scrollWidth > bt.clientWidth + 4) { bt.style.setProperty('--shift', `${bt.clientWidth - sp.scrollWidth - 24}px`); bt.classList.add('marquee'); } });
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
   $('#playerBg').style.backgroundImage = `url("${art.replace(/"/g, '%22')}")`;
@@ -800,6 +837,8 @@ function renderNow() {
   refreshLike();
   setSession(t);
   renderPlayState();
+  lastSec = lastLeft = -1;
+  pendingSeek = null;
   renderTime();
   renderQueue();
   markPlaying();
@@ -815,27 +854,44 @@ function renderPlayState() {
   $('#repeat').classList.toggle('one', P.repeat === 'one');
 }
 let seekRatio = null;
+let pendingSeek = null;
 const segStart = () => (seg ? seg.start : 0);
+/* jump to a position inside the current song (seconds from its start) */
+function seekTo(sec) {
+  const d = seekDur();
+  if (!d) return;
+  const x = Math.min(d - 0.05, Math.max(0, sec));
+  pendingSeek = x;
+  audio.currentTime = segStart() + x;
+  renderTime();
+  syncPosition();
+}
 const seekDur = () => {
   const full = isFinite(audio.duration) && audio.duration ? audio.duration : 0;
   if (seg) return (seg.end || full) - seg.start;
   return full || (P.cur && P.cur.duration) || 0;
 };
+const seekFill = $('#seekFill'), miniBar = $('#miniBar'), tCur = $('#tCur'), tDur = $('#tDur');
+let lastSec = -1, lastLeft = -1;
 function setSeek(r) {
-  $('#seekFill').style.transform = `scaleX(${r})`;
-  $('#seek').setAttribute('aria-valuenow', Math.round(r * 100));
+  seekFill.style.transform = `scaleX(${r})`;
 }
 function renderTime() {
   const t = P.cur;
-  if (!t || t.live) { $('#miniBar').style.width = '0'; return; }
+  if (!t || t.live) { miniBar.style.transform = 'scaleX(0)'; return; }
   const d = seekDur();
-  const c = Math.max(0, (audio.currentTime || 0) - segStart());
-  const p = d ? Math.min(100, (c / d) * 100) : 0;
-  $('#miniBar').style.width = p + '%';
+  const c = pendingSeek != null ? pendingSeek : Math.max(0, (audio.currentTime || 0) - segStart());
+  const r = d ? Math.min(1, c / d) : 0;
+  miniBar.style.transform = `scaleX(${r})`;
   if (seekRatio != null) return;
-  setSeek(p / 100);
-  $('#tCur').textContent = fmt(c);
-  $('#tDur').textContent = '−' + fmt(Math.max(0, d - c));
+  setSeek(r);
+  const sec = Math.floor(c), left = Math.floor(Math.max(0, d - c));
+  if (sec !== lastSec || left !== lastLeft) {
+    lastSec = sec; lastLeft = left;
+    tCur.textContent = fmt(c);
+    tDur.textContent = '−' + fmt(Math.max(0, d - c));
+    $('#seek').setAttribute('aria-valuenow', Math.round(r * 100));
+  }
 }
 function refreshLike() {
   const t = P.cur;
@@ -858,8 +914,9 @@ function markPlaying() {
   $$('#view .row[data-id]').forEach((el) => el.classList.toggle('playing', el.dataset.id === id));
 }
 
-$('#play').onclick = () => P.toggle();
-$('#miniPlay').onclick = () => P.toggle();
+const pop = (el) => { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); };
+$('#play').onclick = (e) => { pop(e.currentTarget); P.toggle(); };
+$('#miniPlay').onclick = (e) => { pop(e.currentTarget); P.toggle(); };
 $('#next').onclick = () => P.next();
 $('#miniNext').onclick = () => P.next();
 $('#prev').onclick = () => P.prev();
@@ -875,13 +932,17 @@ $('#repeat').onclick = () => {
 $('#clearQueue').onclick = () => { P.queue = P.queue.slice(0, P.idx + 1); P.persist(); renderQueue(); };
 /* seek bar: follows the finger instantly, jumps the audio once on release */
 const seekEl = $('#seek');
+const bubble = $('#seekBubble');
 function seekAt(e) {
   const r = seekEl.getBoundingClientRect();
   seekRatio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   const d = seekDur();
   setSeek(seekRatio);
-  $('#tCur').textContent = fmt(seekRatio * d);
-  $('#tDur').textContent = '−' + fmt(Math.max(0, d - seekRatio * d));
+  tCur.textContent = fmt(seekRatio * d);
+  tDur.textContent = '−' + fmt(Math.max(0, d - seekRatio * d));
+  bubble.textContent = fmt(seekRatio * d);
+  bubble.style.transform = `translateX(${Math.min(r.width - 28, Math.max(28, seekRatio * r.width))}px) translateX(-50%)`;
+  lastSec = lastLeft = -1;
 }
 seekEl.addEventListener('pointerdown', (e) => {
   if (seekEl.classList.contains('disabled') || !seekDur()) return;
@@ -893,11 +954,10 @@ seekEl.addEventListener('pointerdown', (e) => {
 seekEl.addEventListener('pointermove', (e) => { if (seekRatio != null) seekAt(e); });
 const seekEnd = () => {
   if (seekRatio == null) return;
-  const d = seekDur();
-  if (d) audio.currentTime = segStart() + seekRatio * d;
+  const x = seekRatio * seekDur();
   seekRatio = null;
   seekEl.classList.remove('active');
-  renderTime();
+  seekTo(x);
 };
 seekEl.addEventListener('pointerup', seekEnd);
 seekEl.addEventListener('pointercancel', seekEnd);
@@ -905,7 +965,7 @@ seekEl.addEventListener('lostpointercapture', seekEnd);
 seekEl.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
   e.preventDefault();
-  if (seekDur()) audio.currentTime = Math.min(segStart() + seekDur(), Math.max(segStart(), audio.currentTime + (e.key === 'ArrowRight' ? 5 : -5)));
+  seekTo(audio.currentTime - segStart() + (e.key === 'ArrowRight' ? 5 : -5));
 });
 const vol = $('#volume');
 vol.value = Math.round(audio.volume * 100); vol.style.setProperty('--p', vol.value + '%');
@@ -944,15 +1004,42 @@ function closePlayer(animate = true) {
   playerEl.addEventListener('transitionend', fin, { once: true });
   setTimeout(fin, 420);
 }
-$('#miniOpen').onclick = openPlayer;
+function swipeable(el, onSwipe) {
+  let x0 = 0, y0 = 0, on = false, moved = false;
+  el.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; on = true; moved = false; el.style.transition = 'none'; }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (!on) return;
+    const dx = e.touches[0].clientX - x0, dy = e.touches[0].clientY - y0;
+    if (!moved && Math.abs(dy) > Math.abs(dx)) { on = false; return; }
+    if (Math.abs(dx) > 8) moved = true;
+    if (moved) el.style.transform = `translate3d(${dx * 0.6}px,0,0)`;
+  }, { passive: true });
+  el.addEventListener('touchend', (e) => {
+    if (!on) return;
+    on = false;
+    const dx = e.changedTouches[0].clientX - x0;
+    el.style.transition = 'transform .28s cubic-bezier(.25,.8,.3,1)';
+    if (moved && Math.abs(dx) > 60) {
+      el.style.transform = `translate3d(${dx > 0 ? 40 : -40}px,0,0)`;
+      setTimeout(() => { el.style.transform = ''; }, 140);
+      onSwipe(dx < 0 ? 1 : -1);
+      el.dataset.swiped = '1';
+      setTimeout(() => { delete el.dataset.swiped; }, 350);
+    } else el.style.transform = '';
+  });
+}
+swipeable($('#stage'), (dir) => (dir > 0 ? P.next() : P.prev()));
+swipeable($('#mini'), (dir) => (dir > 0 ? P.next() : P.prev()));
+$('#miniOpen').onclick = () => { if (!$('#mini').dataset.swiped) openPlayer(); };
 $('#playerClose').onclick = () => closePlayer();
 let drag = null;
 playerEl.addEventListener('touchstart', (e) => {
-  drag = playerEl.scrollTop <= 0 && !e.target.closest('input, .seekbar') ? { y0: e.touches[0].clientY, t0: performance.now(), dy: 0 } : null;
+  drag = playerEl.scrollTop <= 0 && !e.target.closest('input, .seekbar') ? { x0: e.touches[0].clientX, y0: e.touches[0].clientY, t0: performance.now(), dy: 0 } : null;
 }, { passive: true });
 playerEl.addEventListener('touchmove', (e) => {
   if (!drag) return;
   const dy = e.touches[0].clientY - drag.y0;
+  if (!drag.dy && Math.abs(e.touches[0].clientX - drag.x0) > Math.abs(dy)) { drag = null; return; }
   if (!drag.dy && dy < -6) { drag = null; return; }
   if (!drag.dy && dy <= 0) return;
   e.preventDefault();
@@ -1638,6 +1725,24 @@ function prefetch(h) {
 }
 document.addEventListener('pointerdown', (e) => { const a = e.target.closest('a[href^="#"]'); if (a) prefetch(a.getAttribute('href')); }, { passive: true });
 
+/* compact title bar: appears once the big page title scrolls away */
+let titleObs = null;
+function watchTitle() {
+  if (titleObs) titleObs.disconnect();
+  document.body.classList.remove('scrolled');
+  const pick = () => view.querySelector('.page-title, .artist-head h1, .hero h1');
+  if (view.querySelector('.search-bar')) return;
+  const attach = () => {
+    const el = pick();
+    if (!el || !('IntersectionObserver' in window)) return false;
+    $('#topnavTitle').textContent = el.textContent;
+    titleObs = new IntersectionObserver(([e]) => document.body.classList.toggle('scrolled', !e.isIntersecting && e.boundingClientRect.top < 0), { rootMargin: '-50px 0px 0px 0px' });
+    titleObs.observe(el);
+    return true;
+  };
+  if (!attach()) setTimeout(attach, 600);
+}
+
 /* ======================= router ======================= */
 function route() {
   const h = location.hash.slice(1) || 'home';
@@ -1650,6 +1755,8 @@ function route() {
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
   fn(arg);
   window.scrollTo(0, 0);
+  view.classList.remove('enter'); void view.offsetWidth; view.classList.add('enter');
+  watchTitle();
   markPlaying();
 }
 window.addEventListener('hashchange', route);
