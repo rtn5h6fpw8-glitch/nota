@@ -572,10 +572,6 @@ body.scrolled .topnav { opacity: 1; transform: none; visibility: visible; transi
 .lyr-line { transition: opacity .5s var(--ease), filter .5s var(--ease), transform .6s var(--ease); }
 .lyr-inner { transition: transform .75s var(--ease); }
 .big-lyric { font-family: var(--display); font-weight: 600; font-size: 16px; line-height: 1.35; }
-/* while the cover flies in from the mini player, the rest of the player rises gently */
-.player.flying { animation: fadeIn .32s ease-out; }
-.player.flying .now, .player.flying .seek, .player.flying .controls, .player.flying .big-lyric, .player.flying .queue-wrap, .player.flying .volume { animation: up .55s var(--ease) both; }
-.player.flying .seek { animation-delay: .03s; } .player.flying .controls { animation-delay: .06s; } .player.flying .queue-wrap { animation-delay: .09s; }
 @keyframes fadeIn { from { opacity: 0; } }
 @keyframes up { from { opacity: 0; transform: translateY(26px); } }
 
@@ -594,3 +590,67 @@ body.scrolled .topnav { opacity: 1; transform: none; visibility: visible; transi
 .stage.paused { box-shadow: 0 24px 50px rgba(0, 0, 0, .55); }
 .mini { box-shadow: 0 10px 24px rgba(0, 0, 0, .5), inset 0 0 0 .5px rgba(255, 255, 255, .08); }
 .tabs { box-shadow: 0 10px 24px rgba(0, 0, 0, .5); }
+
+/* player background: rich colour from the cover instead of grey */
+.player-bg div { filter: blur(14px) saturate(2) brightness(.78); }
+.player-bg::after { background: linear-gradient(to bottom, rgba(0, 0, 0, .1), rgba(0, 0, 0, .45)); }
+.lyrics .lyr-state { color: #fff; opacity: .85; font-size: 18px; font-weight: 600; padding-top: 34%; display: flex; flex-direction: column; align-items: center; gap: 14px; line-height: 1.4; }
+.lyrics .lyr-state .spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .25); border-top-color: #fff; animation: spin .8s linear infinite; }
+.lyr-note { margin: 0 0 22px; padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, .12); color: #fff; font-size: 14px; line-height: 1.4; }
+.lyrics.plain { -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 85%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0, #000 85%, transparent 100%); overflow-y: auto; }
+.lyrics.plain .lyr-inner { transform: none !important; }
+
+/* =================== skins =================== */
+/* Классика: light, system type, red accent */
+html[data-skin="classic"] {
+  --bg: #ffffff; --surface: #f2f2f6; --surface-2: #e8e8ee; --fg: #101012; --fg-2: #6c6c74; --fg-3: #a9a9b1;
+  --line: rgba(0, 0, 0, .08); --accent: #f0384a; --glass: rgba(255, 255, 255, .9);
+  --shadow: 0 12px 30px rgba(0, 0, 0, .12); --art-edge: inset 0 0 0 .5px rgba(0, 0, 0, .1); --display: var(--font);
+  color-scheme: light;
+}
+html[data-skin="classic"] .page-title { font-weight: 800; font-size: 34px; letter-spacing: -.03em; }
+html[data-skin="classic"] .sec-head h2 { font-weight: 700; font-size: 21px; letter-spacing: -.02em; }
+html[data-skin="classic"] .seg button.on { background: #101012; color: #fff; }
+html[data-skin="classic"] .topnav { background: rgba(255, 255, 255, .97); }
+html[data-skin="classic"] .card .art { box-shadow: 0 6px 16px rgba(0, 0, 0, .1); }
+html[data-skin="classic"] .sheet { background: #fff; }
+html[data-skin="classic"] .toast { background: rgba(20, 20, 22, .94); }
+html[data-skin="classic"] .hero-card { background: #1a1a1e; }
+@media (max-width: 899px) {
+  html[data-skin="classic"] .tabs { background: #f7f7fa; border-color: rgba(0, 0, 0, .06); box-shadow: 0 10px 26px rgba(0, 0, 0, .12); }
+  html[data-skin="classic"] .tabs a.on { color: var(--accent); }
+  html[data-skin="classic"] .tabs a::before { background: rgba(240, 56, 74, .1); }
+  html[data-skin="classic"] .mini { background: #ffffff; box-shadow: 0 10px 26px rgba(0, 0, 0, .14), inset 0 0 0 .5px rgba(0, 0, 0, .06); }
+}
+
+/* Аврора: deep violet night with a soft coloured glow behind everything */
+html[data-skin="aurora"] {
+  --bg: #0a0714; --surface: rgba(255, 255, 255, .06); --surface-2: rgba(255, 255, 255, .1); --fg: #ffffff; --fg-2: #b8b1d8; --fg-3: #6d6690;
+  --line: rgba(255, 255, 255, .08); --accent: #c084fc; color-scheme: dark;
+}
+html[data-skin="aurora"] body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60% 40% at 15% 0%, rgba(139, 92, 246, .35), transparent 70%),
+    radial-gradient(50% 35% at 100% 20%, rgba(236, 72, 153, .22), transparent 70%),
+    radial-gradient(70% 45% at 50% 100%, rgba(59, 130, 246, .2), transparent 70%);
+}
+html[data-skin="aurora"] .btn.solid { background: linear-gradient(90deg, #8b5cf6, #ec4899); }
+html[data-skin="aurora"] .seg button.on { background: linear-gradient(90deg, #8b5cf6, #ec4899); color: #fff; }
+html[data-skin="aurora"] .menu svg, html[data-skin="aurora"] .btn svg { color: #c084fc; }
+html[data-skin="aurora"] .topnav { background: rgba(10, 7, 20, .96); }
+html[data-skin="aurora"] .hero-card { background: rgba(255, 255, 255, .06); }
+@media (max-width: 899px) {
+  html[data-skin="aurora"] .tabs { background: #1a1430; border-color: rgba(192, 132, 252, .18); }
+  html[data-skin="aurora"] .tabs a.on { color: #fff; }
+  html[data-skin="aurora"] .tabs a::before { background: linear-gradient(90deg, rgba(139, 92, 246, .55), rgba(236, 72, 153, .45)); }
+  html[data-skin="aurora"] .mini { background: #221a3d; }
+  html[data-skin="aurora"] .mini-progress i { background: linear-gradient(90deg, #8b5cf6, #ec4899); }
+}
+.skins { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.skin { display: flex; flex-direction: column; gap: 6px; align-items: center; padding: 10px 6px 8px; border-radius: 14px; background: var(--surface-2); font-size: 13px; font-weight: 600; color: var(--fg); border: 2px solid transparent; }
+.skin.on { border-color: var(--accent); }
+.skin i { width: 100%; aspect-ratio: 9 / 12; border-radius: 10px; }
+.skin[data-skin="noir"] i { background: linear-gradient(160deg, #1d1d21, #050506); }
+.skin[data-skin="classic"] i { background: linear-gradient(160deg, #ffffff, #e8e8ee); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .08); }
+.skin[data-skin="aurora"] i { background: radial-gradient(80% 60% at 20% 10%, #8b5cf6, transparent), radial-gradient(70% 60% at 100% 60%, #ec4899, transparent), #0a0714; }

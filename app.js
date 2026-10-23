@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '29 · 23.10.2026';
+const APP_VERSION = '30 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -958,7 +958,7 @@ function drawLyrics() {
   box.classList.remove('plain');
   if (!t) return;
   if (t.live) { inner.innerHTML = '<p class="lyr-state">У радиоэфира нет текста песни</p>'; return; }
-  if (!d) { inner.innerHTML = '<p class="lyr-state">Ищу текст…</p>'; return; }
+  if (!d) { inner.innerHTML = '<p class="lyr-state"><span class="spin"></span>Ищу текст песни…</p>'; return; }
   if (d.inst) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
   if (d.none || (!d.synced && !d.plain)) { inner.innerHTML = `<p class="lyr-state">Текста этой песни нет в базе текстов.<br><br>Тексты есть у большинства известных песен. У независимых артистов и электронной музыки их обычно нет.</p>`; return; }
   if (lyr.lines) {
@@ -966,7 +966,7 @@ function drawLyrics() {
   } else {
     box.classList.add('plain');
     const text = d.plain || (d.synced || []).map((l) => l.text).join('\n');
-    inner.innerHTML = text.split('\n').map((x) => `<p class="lyr-line">${esc(x) || '&nbsp;'}</p>`).join('') + `<span class="lyr-src">Текст: LRCLIB${t.preview ? ' · у превью без синхронизации' : ''}</span>`;
+    inner.innerHTML = (t.preview ? '<p class="lyr-note">Это превью 30 секунд, поэтому текст идёт без подсветки. Синхронно подсвечиваются песни, которые играют целиком.</p>' : '') + text.split('\n').map((x) => `<p class="lyr-line">${esc(x) || '&nbsp;'}</p>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
   }
   lyr.idx = -2;
   syncLyrics(true);
@@ -1246,27 +1246,10 @@ const playerEl = $('#player');
 function openPlayer() {
   if (!P.cur) return;
   playerEl.style.transition = ''; playerEl.style.transform = '';
-  const from = $('#miniArt').getBoundingClientRect();
   playerEl.hidden = false;
   document.documentElement.style.overflow = 'hidden';
-  flyCover(from);
   requestAnimationFrame(fitTitle);
   startTick();
-}
-function flyCover(from) {
-  const stage = $('#stage');
-  if (!stage.animate || !from.width || matchMedia('(prefers-reduced-motion: reduce)').matches || $('#player').classList.contains('lyrics-on')) return;
-  playerEl.classList.add('flying');
-  requestAnimationFrame(() => {
-    const to = stage.getBoundingClientRect();
-    if (!to.width) { playerEl.classList.remove('flying'); return; }
-    const sc = from.width / to.width;
-    const end = getComputedStyle(stage).transform;
-    stage.animate([
-      { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${sc})`, borderRadius: `${10 / sc}px` },
-      { transform: end === 'none' ? 'none' : end, borderRadius: '18px' },
-    ], { duration: 560, easing: 'cubic-bezier(.32,.72,0,1)' }).finished.finally(() => playerEl.classList.remove('flying'));
-  });
 }
 function hidePlayer() {
   playerEl.hidden = true;
@@ -1912,6 +1895,7 @@ const views = {
   settings() {
     view.innerHTML = backBtn('#library') + `<h1 class="page-title">Источники</h1><p class="page-sub">Только бесплатная и легальная музыка</p>
       <div class="group"><h3>Audius</h3><p class="note">Миллионы треков независимых артистов со всего мира: страницы артистов, альбомы, чарты по жанрам.</p><span class="state"><i></i>Подключено</span></div>
+      <div class="group"><h3>Оформление</h3><div class="skins">${[['noir', 'Ночь'], ['classic', 'Классика'], ['aurora', 'Аврора']].map(([k, n]) => `<button class="skin${document.documentElement.dataset.skin === k ? ' on' : ''}" data-skin="${k}"><i></i>${n}</button>`).join('')}</div></div>
       <div class="group"><h3>Deezer</h3><p class="note">Страницы известных артистов, альбомы, чарты и официальные превью по 30 секунд.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>LRCLIB</h3><p class="note">Синхронные тексты песен.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Internet Archive</h3><p class="note">Независимые лейблы, живые концерты, старые пластинки.</p><span class="state"><i></i>Подключено</span></div>
@@ -1923,6 +1907,7 @@ const views = {
       <div class="group"><h3>Скрытое</h3><p class="note">Альбомы: ${lib.hidden.albums.length}, треки: ${lib.hidden.tracks.length}. Скрытое не показывается нигде в приложении.</p><button class="btn" id="unhide">Показать всё скрытое</button></div>
       <div class="group"><h3>Данные</h3><p class="note">Избранное, плейлисты и файлы хранятся только в этом браузере.</p><button class="btn" id="wipe">Очистить историю</button></div>`;
     view.insertAdjacentHTML('beforeend', `<p class="note" style="margin:22px 0 0;text-align:center">Note · версия ${APP_VERSION}</p>`);
+    $$('[data-skin]', view).forEach((b) => b.onclick = () => { setSkin(b.dataset.skin); $$('[data-skin]', view).forEach((x) => x.classList.toggle('on', x === b)); });
     $('#jmForm').onsubmit = async (e) => {
       e.preventDefault();
       const key = $('#jmKey').value.trim();
@@ -1935,6 +1920,13 @@ const views = {
   },
 };
 
+/* app look: Ночь (dark), Классика (light), Аврора (violet glow) */
+function setSkin(k) {
+  document.documentElement.dataset.skin = k;
+  store.set('skin', k);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = { noir: '#050506', classic: '#ffffff', aurora: '#0a0714' }[k] || '#050506';
+}
 function mosaic(tracks) {
   const arts = [...new Set(tracks.map((t) => t.art).filter(Boolean))].slice(0, 4);
   if (arts.length < 4) return img(arts[0]);
