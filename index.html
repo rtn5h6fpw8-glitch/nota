@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Note</title>
 <meta name="description" content="Бесплатная музыка со всего мира: артисты и альбомы Audius и Internet Archive, интернет-радио и ваши файлы.">
-<meta name="theme-color" content="#050506">
-<script>try { document.documentElement.dataset.skin = JSON.parse(localStorage.getItem('nota:skin')) || 'noir'; } catch (e) { document.documentElement.dataset.skin = 'noir'; }</script>
+<meta name="theme-color" content="#000000">
+<script>try { document.documentElement.dataset.skin = JSON.parse(localStorage.getItem('nota:skin')) || 'muse'; } catch (e) { document.documentElement.dataset.skin = 'muse'; }</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -19,7 +19,7 @@
 <link rel="dns-prefetch" href="https://cdnt-preview.dzcdn.net">
 <link rel="dns-prefetch" href="https://creatornode.audius.co">
 <link rel="modulepreload" href="app.js">
-<link rel="preload" href="fonts/unbounded-cyr.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrains-mono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -28,12 +28,19 @@
 <body>
 <nav class="tabs" aria-label="Разделы">
   <div class="brand"><img src="icon.svg" alt="" width="28" height="28"><span class="wordmark">Note</span></div>
+  <div class="folio"><span class="folio-avatar">N</span><span><b>МОЯ МУЗЫКА</b><small class="mono">NOTE · LIBRARY</small></span></div>
   <a href="#home" data-tab="home"><svg viewBox="0 0 24 24"><path d="M12 3.2 3 10v10.3c0 .4.3.7.7.7H9v-6.5h6V21h5.3c.4 0 .7-.3.7-.7V10z"/></svg><span>Главная</span></a>
   <a href="#browse" data-tab="browse"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg><span>Обзор</span></a>
   <a href="#radio" data-tab="radio"><svg viewBox="0 0 24 24"><path d="M12 9.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8zM7 6.2l1.4 1.4a6.2 6.2 0 0 0 0 8.8L7 17.8a8.2 8.2 0 0 1 0-11.6zm10 0a8.2 8.2 0 0 1 0 11.6l-1.4-1.4a6.2 6.2 0 0 0 0-8.8zM4.2 3.4l1.4 1.4a10.2 10.2 0 0 0 0 14.4l-1.4 1.4a12.2 12.2 0 0 1 0-17.2zm15.6 0a12.2 12.2 0 0 1 0 17.2l-1.4-1.4a10.2 10.2 0 0 0 0-14.4z"/></svg><span>Радио</span></a>
   <a href="#library" data-tab="library"><svg viewBox="0 0 24 24"><path d="M4 3.5h2.2v17H4zm4.4 0h2.2v17H8.4zm4.6.9 2.1-.7 5.4 16.2-2.1.7z"/></svg><span>Медиатека</span></a>
   <a href="#search" data-tab="search"><svg viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 0 1 6 12l4.8 4.8-1.5 1.5-4.8-4.8A7.5 7.5 0 1 1 10.5 3zm0 2.1a5.4 5.4 0 1 0 0 10.8 5.4 5.4 0 0 0 0-10.8z"/></svg><span>Поиск</span></a>
+  <p class="side-label mono">КОЛЛЕКЦИИ</p>
+  <a href="#library/liked" class="side-link">Избранное</a>
+  <a href="#library" class="side-link">Недавно играло</a>
+  <a href="#radio" class="side-link">Радио</a>
+  <a href="#mine" class="side-go">Открыть медиатеку</a>
 </nav>
+<div class="mesh" aria-hidden="true"><i></i><i></i><i></i></div>
 
 <div class="topnav" id="topnav" aria-hidden="true"><span id="topnavTitle"></span></div>
 <main id="view" tabindex="-1"></main>
@@ -41,7 +48,7 @@
 <div class="mini" id="mini" hidden>
   <button class="mini-open" id="miniOpen" aria-label="Открыть плеер">
     <span class="mini-art"><img id="miniArt" alt="" onload="this.classList.add('in')"></span>
-    <span class="mini-text"><b id="miniTitle"></b><small id="miniArtist"></small><small id="miniLyric" class="mini-lyric" hidden></small></span>
+    <span class="mini-text"><span class="mini-top"><b id="miniTitle"></b><span class="mini-clock mono" id="miniClock">00:00:00</span></span><small id="miniArtist"></small><small id="miniLyric" class="mini-lyric" hidden></small></span>
   </button>
   <button class="ctl" id="miniPlay" aria-label="Играть"></button>
   <button class="ctl" id="miniNext" aria-label="Следующий"><svg viewBox="0 0 24 24"><path d="M3.5 5.6v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L5 4.9c-.6-.5-1.5-.1-1.5.7zm9 0v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L14 4.9c-.6-.5-1.5-.1-1.5.7z"/></svg></button>

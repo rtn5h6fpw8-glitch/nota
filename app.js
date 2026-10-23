@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '30 · 23.10.2026';
+const APP_VERSION = '31 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -905,7 +905,7 @@ function fetchLyrics(t) {
   }, 30 * 24 * 3600e3);
   function pack(d) { return { synced: d.syncedLyrics ? parseLrc(d.syncedLyrics) : null, plain: d.plainLyrics || '', inst: !!d.instrumental }; }
 }
-const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '', words: {}, activeEl: null };
+const lyr = { weekAlbum: null, open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '', words: {}, activeEl: null };
 function loadLyrics(t) {
   lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : ''; lyr.words = {}; lyr.activeEl = null;
   $('#player').classList.remove('has-sub');
@@ -1058,6 +1058,7 @@ function renderNow() {
   if (t && mini.hidden) { mini.classList.remove('show'); void mini.offsetWidth; mini.classList.add('show'); }
   mini.hidden = !t;
   if (!t) return;
+  if (t.id !== shownId || !$('#nowCard')) refreshNowCard();
   if (t.id !== shownId) {
     shownId = t.id;
     for (const el of [$('#bigArt'), $('.mini-text'), $('.now-text')]) { el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap'); }
@@ -1092,6 +1093,9 @@ function renderNow() {
 }
 function renderPlayState() {
   const on = P.playing;
+  const nc = $('#nowCard');
+  if (nc) { const e = nc.querySelector('.nc-eyebrow'); if (e) e.textContent = on ? 'СЕЙЧАС ИГРАЕТ' : 'НА ПАУЗЕ'; const d = nc.querySelector('.nc-dots i'); if (d) d.classList.toggle('on', on); }
+  document.body.classList.toggle('is-playing', on);
   for (const b of [$('#play'), $('#miniPlay')]) {
     if (b.dataset.on === String(on)) continue;
     b.dataset.on = String(on);
@@ -1125,7 +1129,9 @@ const seekDur = () => {
   return full || (P.cur && P.cur.duration) || 0;
 };
 const seekFill = $('#seekFill'), miniBar = $('#miniBar'), tCur = $('#tCur'), tDur = $('#tDur');
-let lastSec = -1, lastLeft = -1;
+let lastSec = -1, lastLeft = -1, lastClock = -1;
+/* HH:MM:SS for the Pulse bar */
+const clock = (s) => { s = Math.max(0, Math.floor(s || 0)); return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((x) => String(x).padStart(2, '0')).join(':'); };
 function setSeek(r) {
   seekFill.style.transform = `scaleX(${r})`;
 }
@@ -1136,6 +1142,10 @@ function renderTime() {
   const c = pendingSeek != null ? pendingSeek : Math.max(0, (audio.currentTime || 0) - segStart());
   const r = d ? Math.min(1, c / d) : 0;
   miniBar.style.transform = `scaleX(${r})`;
+  const nl = $('#nowLine');
+  if (nl) nl.style.transform = `scaleX(${r})`;
+  const sec0 = Math.floor(c);
+  if (sec0 !== lastClock) { lastClock = sec0; $('#miniClock').textContent = clock(c); }
   syncLyrics(false);
   if (seekRatio != null) return;
   setSeek(r);
@@ -1433,6 +1443,34 @@ function playCard(t, k, i) {
   return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${t.live ? img(t.art) : img(t.art, false, t.artBig)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
 }
 /* the big card at the top of Home: the album of the week over its own blurred cover */
+/* "Сейчас играет": the big card on Home; before anything plays it shows the album of the week */
+function nowCard() {
+  const t = P.cur;
+  if (!t) {
+    const a = lyr.weekAlbum;
+    if (!a) return '';
+    return `<a class="now-card" href="${hrefOf(a)}">
+      <span class="nc-cover">${img(a.art, false, a.artBig, '(min-width: 600px) 520px, 92vw')}</span>
+      <span class="nc-dots"><i></i><i></i><i></i></span>
+      <span class="nc-strip"><span class="nc-eyebrow mono">АЛЬБОМ НЕДЕЛИ</span><b>${esc(a.title)}</b><small>${esc(a.artist || '')}</small></span>
+    </a>`;
+  }
+  const art = (t.coverKey && files.covers.get(t.coverKey)) || t.art || '';
+  return `<button class="now-card is-now" id="nowCard" aria-label="Открыть плеер">
+    <span class="nc-cover">${img(art, false, t.artBig)}</span>
+    <span class="nc-dots"><i class="${P.playing ? 'on' : ''}"></i><i class="${lib.isLiked(t.id) ? 'gold' : ''}"></i><i class="${lyr.lines ? 'on' : ''}"></i></span>
+    <span class="nc-strip"><span class="nc-eyebrow mono">${P.playing ? 'СЕЙЧАС ИГРАЕТ' : 'НА ПАУЗЕ'}</span><b>${esc(t.title)}</b><small>${esc([t.artist, t.album].filter(Boolean).join(' · '))}</small>
+      <span class="nc-line"><i id="nowLine"></i></span></span>
+  </button>`;
+}
+function refreshNowCard() {
+  const slot = $('#nowSlot');
+  if (slot) slot.innerHTML = nowCard();
+}
+document.addEventListener('click', (e) => { if (e.target.closest('#nowCard')) openPlayer(); });
+function genreChips() {
+  return `<div class="chips-row">${GENRES.slice(0, 12).map(([g, n]) => `<a class="chip" href="#genre/${encodeURIComponent(g)}">${esc(n)}</a>`).join('')}</div>`;
+}
 function heroCard(a) {
   return `<a class="hero-card" href="${hrefOf(a)}">
     <span class="hc-bg"><img src="${esc(a.art)}" alt="" referrerpolicy="no-referrer" onerror="noteImgErr(this)"></span>
@@ -1557,8 +1595,9 @@ const views = {
     h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => {
       const list = l.filter((a) => !lib.isHidden(a));
       if (!list.length) return '';
-      return heroCard(list[0]) + (list.length > 1 ? section('Альбомы недели', shelf(list.slice(1, 12).map(card).join(''))) : '');
-    }, `<div class="hero-card sk"></div>`);
+      lyr.weekAlbum = list[0];
+      return `<div id="nowSlot">${nowCard()}</div>` + genreChips() + (list.length > 1 ? section('Альбомы недели', shelf(list.slice(1, 12).map(card).join(''), 'shotgun')) : '');
+    }, `<div class="now-card loading"><span class="typing">Note загружает музыку</span></div>`);
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
     h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => rowShelf(l.slice(0, 20)), skRows(4)));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
@@ -1895,7 +1934,7 @@ const views = {
   settings() {
     view.innerHTML = backBtn('#library') + `<h1 class="page-title">Источники</h1><p class="page-sub">Только бесплатная и легальная музыка</p>
       <div class="group"><h3>Audius</h3><p class="note">Миллионы треков независимых артистов со всего мира: страницы артистов, альбомы, чарты по жанрам.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>Оформление</h3><div class="skins">${[['noir', 'Ночь'], ['classic', 'Классика'], ['aurora', 'Аврора']].map(([k, n]) => `<button class="skin${document.documentElement.dataset.skin === k ? ' on' : ''}" data-skin="${k}"><i></i>${n}</button>`).join('')}</div></div>
+      <div class="group"><h3>Оформление</h3><div class="skins">${[['muse', 'Muse'], ['noir', 'Ночь'], ['classic', 'Классика'], ['aurora', 'Аврора']].map(([k, n]) => `<button class="skin${document.documentElement.dataset.skin === k ? ' on' : ''}" data-skin="${k}"><i></i>${n}</button>`).join('')}</div></div>
       <div class="group"><h3>Deezer</h3><p class="note">Страницы известных артистов, альбомы, чарты и официальные превью по 30 секунд.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>LRCLIB</h3><p class="note">Синхронные тексты песен.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Internet Archive</h3><p class="note">Независимые лейблы, живые концерты, старые пластинки.</p><span class="state"><i></i>Подключено</span></div>
@@ -1925,7 +1964,7 @@ function setSkin(k) {
   document.documentElement.dataset.skin = k;
   store.set('skin', k);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = { noir: '#050506', classic: '#ffffff', aurora: '#0a0714' }[k] || '#050506';
+  if (meta) meta.content = { muse: '#000000', noir: '#050506', classic: '#ffffff', aurora: '#0a0714' }[k] || '#000000';
 }
 function mosaic(tracks) {
   const arts = [...new Set(tracks.map((t) => t.art).filter(Boolean))].slice(0, 4);
@@ -2043,6 +2082,41 @@ function prefetch(h) {
   else if (name === 'album') { const id = decodeURIComponent(arg); cached('ia-album:' + id, () => archive.album(id)).catch(() => {}); }
 }
 document.addEventListener('pointerdown', (e) => { const a = e.target.closest('a[href^="#"]'); if (a) prefetch(a.getAttribute('href')); }, { passive: true });
+
+/* scroll velocity: secondary text fades back while the list flies by */
+let lastY = 0, lastT = 0, fastTimer;
+window.addEventListener('scroll', () => {
+  const now = performance.now(), v = Math.abs(scrollY - lastY) / Math.max(1, now - lastT);
+  lastY = scrollY; lastT = now;
+  if (v > 2.2) { document.body.classList.add('fast'); clearTimeout(fastTimer); fastTimer = setTimeout(() => document.body.classList.remove('fast'), 180); }
+}, { passive: true });
+/* desktop only: a soft glowing cursor dot and a background that follows the mouse a little */
+if (matchMedia('(pointer: fine)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  const dot = document.createElement('div');
+  dot.className = 'cursor-dot';
+  document.body.appendChild(dot);
+  let mx = 0, my = 0, pending = false;
+  addEventListener('pointermove', (e) => {
+    mx = e.clientX; my = e.clientY;
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      dot.style.transform = `translate(${mx}px, ${my}px)`;
+      document.documentElement.style.setProperty('--mx', (mx / innerWidth - 0.5).toFixed(3));
+      document.documentElement.style.setProperty('--my', (my / innerHeight - 0.5).toFixed(3));
+    });
+  }, { passive: true });
+  /* 3D tilt for the big card */
+  document.addEventListener('pointermove', (e) => {
+    const c = e.target.closest && e.target.closest('.now-card');
+    if (!c) return;
+    const r = c.getBoundingClientRect();
+    c.style.setProperty('--rx', `${((e.clientY - r.top) / r.height - 0.5) * -6}deg`);
+    c.style.setProperty('--ry', `${((e.clientX - r.left) / r.width - 0.5) * 8}deg`);
+  }, { passive: true });
+  document.addEventListener('pointerout', (e) => { const c = e.target.closest && e.target.closest('.now-card'); if (c) { c.style.setProperty('--rx', '0deg'); c.style.setProperty('--ry', '0deg'); } });
+}
 
 /* compact title bar: appears once the big page title scrolls away */
 let titleObs = null;
