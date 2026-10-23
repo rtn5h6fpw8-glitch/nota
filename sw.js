@@ -1,6 +1,6 @@
 // The app shell is taken from the network first, so updates show up at once; the saved copy is used only offline.
 // Artwork is cached after the first view.
-const VERSION = 'note-v24';
+const VERSION = 'note-v25';
 const CACHE = 'shell-' + VERSION;
 const IMG = 'nota-img-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest', 'fonts/bowlby-note.woff2'];
@@ -10,8 +10,6 @@ self.addEventListener('activate', (e) => {
     const old = (await caches.keys()).filter((k) => k !== CACHE && k !== IMG);
     await Promise.all(old.map((k) => caches.delete(k)));
     await self.clients.claim();
-    // pages still running the previous version reload into the new one
-    if (old.length) for (const c of await self.clients.matchAll({ type: 'window' })) c.navigate(c.url).catch(() => {});
   })());
 });
 async function trim() {

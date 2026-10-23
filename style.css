@@ -276,7 +276,7 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 /* ---------------- full player ---------------- */
 .player { will-change: transform; backface-visibility: hidden; position: fixed; inset: 0; z-index: 40; overflow-y: auto; overscroll-behavior: contain; color: #fff; background: #1a1a1c; animation: rise .38s cubic-bezier(.2, .85, .25, 1); }
 @keyframes rise { from { transform: translateY(100%); } }
-.player-bg { position: fixed; inset: 0; overflow: hidden; background: #1a1a1c; }
+.player-bg { position: sticky; top: 0; height: 100vh; height: 100dvh; margin-bottom: -100vh; margin-bottom: -100dvh; overflow: hidden; background: #1a1a1c; pointer-events: none; }
 .player-bg div { position: absolute; left: -10%; top: -10%; width: 30%; height: 30%; transform: scale(4); transform-origin: 0 0; background-size: cover; background-position: center; filter: blur(12px) saturate(1.7) brightness(.6); }
 .player-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, .05), rgba(0, 0, 0, .35)); }
 .player-inner {
@@ -405,7 +405,8 @@ input.text { width: 100%; height: 46px; border-radius: 12px; border: 0; backgrou
 .stage { touch-action: pan-y; will-change: transform; }
 .mini { touch-action: pan-y; }
 .now h2 { overflow: hidden; }
-.now h2 span { display: inline-block; white-space: nowrap; }
+.now h2 span { display: inline-block; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.now h2.marquee span { max-width: none; overflow: visible; }
 .now h2.marquee { text-overflow: clip; -webkit-mask-image: linear-gradient(to right, #000 85%, transparent); mask-image: linear-gradient(to right, #000 85%, transparent); }
 .now h2.marquee span { animation: marquee 9s ease-in-out 1.2s infinite alternate; }
 @keyframes marquee { 0%, 15% { transform: translateX(0); } 85%, 100% { transform: translateX(var(--shift, 0)); } }
@@ -469,7 +470,14 @@ body.scrolled .topnav { opacity: 1; transform: none; }
   .player-bg div { animation: none !important; }
 }
 
-.big-lyric { margin: -12px 0 -6px; min-height: 0; max-height: 0; overflow: hidden; color: #fff; font-size: 17px; font-weight: 600; line-height: 1.3; opacity: 0; transition: opacity .3s, max-height .3s; }
-.big-lyric.on { max-height: 3em; opacity: .9; }
+.big-lyric { margin: -12px 0 -6px; height: 0; overflow: hidden; color: #fff; font-size: 17px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; opacity: 0; transition: opacity .25s; }
+.player.has-sub .big-lyric { height: 2.6em; }
+.big-lyric.on { opacity: .9; }
 .player.lyrics-on .big-lyric { display: none; }
 #lyricsBtn.none { opacity: .35; }
+
+/* placeholder note disappears once the real artwork is in */
+.art:has(img.in) > .ph, .thumb:has(img.in) > .ph { visibility: hidden; }
+.group input.text { background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+.player, .sheet, .lyrics, .shelf, .seg, .tiles { touch-action: manipulation; }
+.stage, .mini { touch-action: pan-y; }

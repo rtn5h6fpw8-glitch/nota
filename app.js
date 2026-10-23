@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '24 · 22.10.2026';
+const APP_VERSION = '25 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -50,6 +50,14 @@ async function getJSONOnce(url, ms) {
 }
 /* Cache: answers are kept in memory and in localStorage, so screens open instantly
    from the last known data while a fresh copy loads in the background. */
+/* a small queue: at most n requests of one kind at the same time */
+function limiter(n) {
+  let active = 0;
+  const waiting = [];
+  const next = () => { if (active >= n || !waiting.length) return; active++; const [fn, res, rej] = waiting.shift(); fn().then(res, rej).finally(() => { active--; next(); }); };
+  return (fn) => new Promise((res, rej) => { waiting.push([fn, res, rej]); next(); });
+}
+const slow = limiter(2);
 const memo = new Map();
 const CACHE_FRESH = 15 * 60 * 1000;
 const disk = {
@@ -121,6 +129,19 @@ const I = {
   following: '<svg viewBox="0 0 24 24"><path d="M10 3a4.3 4.3 0 1 1 0 8.6A4.3 4.3 0 0 1 10 3zm0 10c4.4 0 8 2.2 8 5V20H2v-2c0-2.8 3.6-5 8-5zm7.7-3.4-2.6-2.6 1.3-1.3 1.3 1.3 3.3-3.3 1.3 1.3z"/></svg>',
 };
 
+/* Audius artwork lives on many servers; when one fails, try the next */
+const AU_MIRRORS = ['https://audius-creator-9.theblueprint.xyz', 'https://val004.open-audio-validator.com', 'https://audius.zeogrid.com', 'https://v.monophonic.digital', 'https://cn3.mainnet.audiusindex.org'];
+window.noteImgErr = (el) => {
+  const u = el.currentSrc || el.src;
+  const n = +(el.dataset.retry || 0);
+  if (/\/content\//.test(u) && n < AU_MIRRORS.length) {
+    el.dataset.retry = n + 1;
+    el.removeAttribute('srcset');
+    el.src = AU_MIRRORS[n] + new URL(u).pathname;
+    return;
+  }
+  el.remove();
+};
 /* artwork with a neutral placeholder underneath */
 const ph = `<div class="ph">${I.note}</div>`;
 const phPerson = `<div class="ph">${I.person}</div>`;
@@ -128,7 +149,7 @@ const phPerson = `<div class="ph">${I.person}</div>`;
 function img(src, person, big, sizes = '(min-width: 600px) 180px, 46vw') {
   if (!src) return person ? phPerson : ph;
   const set = big && big !== src ? ` srcset="${esc(src)} 480w, ${esc(big)} 1000w" sizes="${sizes}"` : '';
-  return (person ? phPerson : ph) + `<img src="${esc(src)}"${set} alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onload="this.classList.add('in')" onerror="this.remove()">`;
+  return (person ? phPerson : ph) + `<img src="${esc(src)}"${set} alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onload="this.classList.add('in')" onerror="noteImgErr(this)">`;
 }
 /* Internet Archive only offers small thumbnails in lists: show them as a sleeve on a blurred backdrop */
 function sleeve(src) {
@@ -177,6 +198,7 @@ const lib = {
     if (this.isSaved(t.id)) { this.stations = this.stations.filter((x) => x.id !== t.id); toast('Станция удалена'); }
     else { this.stations.unshift(slim(t)); toast('Станция сохранена'); }
     this.save('stations'); refreshLike();
+    if (/^#(radio|library\/stations)/.test(location.hash)) { const y = scrollY; route(); scrollTo(0, y); }
   },
   isFollowing(id) { return this.artists.some((a) => a.id === id); },
   toggleArtist(a) {
@@ -377,10 +399,15 @@ const files = {
     await this.loadCovers();
     let recs = [];
     try { recs = await this.all(); } catch {}
-    return recs.filter((r) => !r.hidden).sort((a, b) => b.added - a.added).map((r) => this.toTrack(r));
+    /* newest import first; inside an import, by album and track number */
+    const batch = (r) => r.batch || r.added || 0;
+    return recs.filter((r) => !r.hidden)
+      .sort((a, b) => batch(b) - batch(a) || String(a.album || '').localeCompare(String(b.album || '')) || (a.n || 0) - (b.n || 0) || (a.added || 0) - (b.added || 0))
+      .map((r) => this.toTrack(r));
   },
   /* imports files or a whole folder: tags first, then the folder layout Artist/Album/track */
   async add(list) {
+    const batch = Date.now();
     const dirCover = new Map();
     for (const f of list) {
       if (!IMAGE_EXT.test(f.name)) continue;
@@ -435,19 +462,19 @@ const files = {
         const cKey = (cArtist + '|' + cAlbum).toLowerCase();
         const various = /^(various|va\b|v\.a\.|сборник|разные)/i.test(cArtist);
         if (!this.covers.has(cKey)) { const pic = tags.picture || dirCover.get(dir); if (pic) { try { await this.putCover(cKey, pic); } catch {} } }
-        await this.put({ key: parent, hidden: true, name: f.name, size: f.size, title: cAlbum, blob: f, added: 0 });
+        await this.put({ key: parent, hidden: true, name: f.name, size: f.size, title: cAlbum, blob: f, added: 0, batch });
         for (let m = 0; m < marks.length; m++) {
           const tr = marks[m];
           const end = m + 1 < marks.length ? marks[m + 1].start : tags.duration || null;
           await this.put({
             /* in a various-artists compilation every song goes to its own performer's folder */
             key: uid(), parent, title: tr.title || `Трек ${tr.n}`, artist: tr.performer || cArtist, albumArtist: various && tr.performer ? tr.performer : cArtist, album: cAlbum,
-            n: tr.n || m + 1, start: tr.start, end, coverKey: cKey, added: Date.now() + n + m / 1000,
+            n: tr.n || m + 1, start: tr.start, end, coverKey: cKey, added: Date.now() + n + m / 1000, batch,
           });
         }
         n += marks.length;
       } else {
-        await this.put({ key: uid(), name: f.name, size: f.size, title, artist, albumArtist, album, n: num, year: tags.year || '', coverKey, blob: f, added: Date.now() + n });
+        await this.put({ key: uid(), name: f.name, size: f.size, title, artist, albumArtist, album, n: num, year: tags.year || '', coverKey, blob: f, added: Date.now() + n, batch });
         n++;
       }
       seen.add(f.name + '|' + f.size);
@@ -684,6 +711,7 @@ const P = {
   errors: 0,
   get cur() { return this.queue[this.idx]; },
   persist() { store.set('queue', this.queue.map(slim)); store.set('idx', this.idx); },
+  resume: store.get('pos', null),
   setQueue(list, i = 0) {
     const pick = list[i];
     list = list.filter((t) => !lib.isHidden(t));
@@ -734,7 +762,13 @@ const P = {
   toggle() {
     const t = this.cur;
     if (!t) return;
-    if (!audio.getAttribute('src')) return this.play(this.idx);
+    if (!audio.getAttribute('src')) {
+      /* first play after the app was reopened: continue where the song was left */
+      const r = this.resume;
+      this.resume = null;
+      if (r && this.cur && r.id === this.cur.id && r.t > 3) audio.addEventListener('loadedmetadata', () => { audio.currentTime = segStart() + r.t; }, { once: true });
+      return this.play(this.idx);
+    }
     if (audio.paused) audio.play().catch(() => {}); else audio.pause();
   },
   next(auto = false) {
@@ -744,7 +778,8 @@ const P = {
     if (this.repeat === 'all' || !auto) return this.play(0);
     audio.pause(); renderPlayState();
   },
-  prev() {
+  prev(force) {
+    if (force) return this.play(this.idx > 0 ? this.idx - 1 : this.queue.length - 1);
     if (seg && audio.currentTime - seg.start > 3) { audio.currentTime = seg.start; return; }
     if (this.cur && audio.currentTime > 3) { audio.currentTime = 0; return; }
     this.play(this.idx > 0 ? this.idx - 1 : this.queue.length - 1);
@@ -805,7 +840,12 @@ function preloadNext() {
   if (n.src === 'deezer') { deezer.fresh(n).then((u) => { if (nextAudio.dataset.id === n.id) nextAudio.src = u; }).catch(() => {}); return; }
   if (n.url) nextAudio.src = n.url;
 }
-audio.addEventListener('ended', () => P.next(true));
+audio.addEventListener('ended', () => { if (P.idx + 1 >= P.queue.length && P.repeat === 'off') showMiniLyric(''); P.next(true); });
+let lastPosSave = 0;
+function savePos() { if (P.cur && !P.cur.live && audio.getAttribute('src')) store.set('pos', { id: P.cur.id, t: Math.max(0, audio.currentTime - segStart()) }); }
+audio.addEventListener('timeupdate', () => { if (Date.now() - lastPosSave > 5000) { lastPosSave = Date.now(); savePos(); } });
+window.addEventListener('pagehide', savePos);
+document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
 /* backup for when frames are paused (screen locked): songs inside one long file still end on time */
 audio.addEventListener('timeupdate', () => {
   if (seg && seg.end && audio.currentTime >= seg.end - 0.15) { P.next(true); return; }
@@ -834,20 +874,22 @@ function parseLrc(text) {
 const cleanTitle = (x) => String(x).replace(/\s*[([](feat|ft|with|prod|prod\.)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').replace(/\s*\[[^\]]*\]\s*$/, '').trim();
 const firstArtist = (x) => String(x || '').split(/,|\s(?:feat\.?|ft\.?|&|x|and)\s/i)[0].trim();
 function fetchLyrics(t) {
-  return cached('lyr2:' + t.id, async () => {
+  return cached('lyr3:' + t.id, async () => {
     /* candidates: the track's own artist/title, and "Artist - Title" written inside the title */
     const cands = [{ a: firstArtist(t.artist), t: cleanTitle(t.title) }];
     const m = String(t.title).match(/^(.+?)\s[-–]\s(.+)$/);
     if (m) cands.unshift({ a: firstArtist(m[1]), t: cleanTitle(m[2]) });
     const dur = t.preview ? 0 : t.duration || 0;
     const good = (d) => d && (d.syncedLyrics || d.plainLyrics);
+    /* a real "not found" is remembered; a busy or unreachable server is not, so the next play tries again */
+    const notFound = (e) => { if (/HTTP 404/.test(String(e && e.message))) return null; throw e; };
     for (const c of cands) {
       if (!c.a || !c.t) continue;
-      const d = await getJSONOnce('https://lrclib.net/api/get?' + new URLSearchParams({ artist_name: c.a, track_name: c.t }), 9000).catch(() => null);
+      const d = await getJSONOnce('https://lrclib.net/api/get?' + new URLSearchParams({ artist_name: c.a, track_name: c.t }), 9000).catch(notFound);
       if (good(d)) return pack(d);
     }
     for (const c of cands) {
-      const l = await getJSONOnce('https://lrclib.net/api/search?' + new URLSearchParams({ q: `${c.a} ${c.t}`.trim() }), 9000).catch(() => []);
+      const l = (await getJSONOnce('https://lrclib.net/api/search?' + new URLSearchParams({ q: `${c.a} ${c.t}`.trim() }), 9000).catch(notFound)) || [];
       const an = norm(c.a), tn = norm(c.t);
       const hits = (l || []).filter((x) => good(x) && norm(x.trackName).includes(tn) && (!an || norm(x.artistName).includes(an) || an.includes(norm(x.artistName))));
       const best = hits.find((x) => x.syncedLyrics && (!dur || Math.abs(x.duration - dur) < 4)) || hits.find((x) => x.syncedLyrics) || hits[0];
@@ -860,6 +902,7 @@ function fetchLyrics(t) {
 const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '' };
 function loadLyrics(t) {
   lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : '';
+  $('#player').classList.remove('has-sub');
   $('#lyricsBtn').classList.toggle('none', !t || !!t.live);
   showMiniLyric('');
   if (!t || t.live) { if (lyr.open) drawLyrics(); return; }
@@ -869,6 +912,7 @@ function loadLyrics(t) {
     lyr.data = d;
     lyr.lines = d.synced && d.synced.length && !t.preview ? d.synced : null;
     $('#lyricsBtn').classList.toggle('none', !!d.none);
+    $('#player').classList.toggle('has-sub', !!lyr.lines);
     if (lyr.open) drawLyrics();
     syncLyrics(true);
   }, () => { if (lyr.open) drawLyrics(); });
@@ -956,6 +1000,13 @@ if ('mediaSession' in navigator) {
 
 /* ---------- player UI ---------- */
 let shownId = '';
+/* a title wider than the player scrolls slowly; it is measured only while the player is on screen */
+function fitTitle() {
+  const bt = $('#bigTitle'), sp = bt.firstChild;
+  if (!sp || $('#player').hidden) return;
+  bt.classList.remove('marquee');
+  if (sp.scrollWidth > bt.clientWidth + 4) { bt.style.setProperty('--shift', `${bt.clientWidth - sp.scrollWidth - 24}px`); bt.classList.add('marquee'); }
+}
 function renderNow() {
   const t = P.cur;
   const mini = $('#mini');
@@ -977,7 +1028,7 @@ function renderNow() {
   const bt = $('#bigTitle');
   bt.innerHTML = `<span>${esc(t.title)}</span>`;
   bt.classList.remove('marquee');
-  requestAnimationFrame(() => { const sp = bt.firstChild; if (sp && sp.scrollWidth > bt.clientWidth + 4) { bt.style.setProperty('--shift', `${bt.clientWidth - sp.scrollWidth - 24}px`); bt.classList.add('marquee'); } });
+  requestAnimationFrame(fitTitle);
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
   $('#playerBg').style.backgroundImage = `url("${art.replace(/"/g, '%22')}")`;
@@ -1151,6 +1202,7 @@ function openPlayer() {
   playerEl.hidden = false;
   document.documentElement.style.overflow = 'hidden';
   renderQueue();
+  requestAnimationFrame(fitTitle);
 }
 function hidePlayer() {
   playerEl.hidden = true;
@@ -1192,8 +1244,8 @@ function swipeable(el, onSwipe) {
     } else el.style.transform = '';
   });
 }
-swipeable($('#stage'), (dir) => (dir > 0 ? P.next() : P.prev()));
-swipeable($('#mini'), (dir) => (dir > 0 ? P.next() : P.prev()));
+swipeable($('#stage'), (dir) => (dir > 0 ? P.next() : P.prev(true)));
+swipeable($('#mini'), (dir) => (dir > 0 ? P.next() : P.prev(true)));
 $('#miniOpen').onclick = () => { if (!$('#mini').dataset.swiped) openPlayer(); };
 $('#playerClose').onclick = () => closePlayer();
 let drag = null;
@@ -1223,7 +1275,7 @@ playerEl.addEventListener('touchend', () => {
 /* no pinch zoom (double-tap zoom is turned off in CSS, so quick double taps on buttons still work) */
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('keydown', (e) => {
-  if (e.target.closest('input, textarea')) return;
+  if (e.target.closest('input:not([type=range]), textarea')) return;
   if (e.code === 'Space') { e.preventDefault(); P.toggle(); }
   if (e.key === 'Escape') { if (!$('#sheet').hidden) closeSheet(); else closePlayer(); }
 });
@@ -1272,7 +1324,7 @@ function trackSheet(t, { playlistId, q, fileView } = {}) {
   if (t.src === 'local') l.push({ label: 'Открыть папку артиста', icon: I.folder, fn: () => { closePlayer(); go('#mine-artist/' + encodeURIComponent(t.albumArtist || t.artist)); } });
   if (t.dzArtist) l.push({ label: 'Перейти к артисту', icon: I.person, fn: () => { closePlayer(); go('#dz/' + t.dzArtist); } });
   if (t.dzAlbum) l.push({ label: 'Перейти к альбому', icon: I.album, fn: () => { closePlayer(); go('#dza/' + t.dzAlbum); } });
-  if (t.src === 'audius' || t.src === 'deezer') l.push({ label: 'Скрыть трек', icon: I.trash, fn: () => { lib.hide('tracks', [t.id]); toast('Трек скрыт'); route(); } });
+  if (t.src === 'audius' || t.src === 'deezer') l.push({ label: 'Скрыть трек', icon: I.trash, fn: () => { lib.hide('tracks', [t.id]); toast('Трек скрыт'); $$(`#view .row[data-id="${CSS.escape(t.id)}"]`).forEach((r) => r.remove()); } });
   if (playlistId) l.push({ label: 'Удалить из плейлиста', icon: I.trash, danger: true, fn: () => { const p = lib.playlists.find((x) => x.id === playlistId); if (p) { p.tracks = p.tracks.filter((x) => x.id !== t.id); lib.save('playlists'); route(); } } });
   if (fileView) l.push({ label: 'Удалить файл', icon: I.trash, danger: true, fn: async () => { await files.del(t.localKey); toast('Файл удалён'); route(); } });
   openSheet(sheetTitle(t), acts(l));
@@ -1421,7 +1473,7 @@ const RAP_SOURCES = [
   ['Trap', 'week', 0], ['Trap', 'month', 0], ['Trap', 'allTime', 0], ['Trap', 'allTime', 100],
 ];
 const rapIndex = () => cached('rap-index', async () => {
-  const lists = await Promise.all(RAP_SOURCES.map(([genre, time, offset]) => audius.trending({ genre, time, limit: 100, offset }).catch(() => [])));
+  const lists = await Promise.all(RAP_SOURCES.map(([genre, time, offset]) => slow(() => audius.trending({ genre, time, limit: 100, offset })).catch(() => [])));
   const all = artistsOf(lists.flat(), 5000);
   if (!all.length) throw new Error('empty');
   return all.sort((a, b) => b.followers - a.followers);
@@ -1460,7 +1512,7 @@ const views = {
     let h = `<h1 class="page-title">Обзор</h1><p class="page-sub">Музыка независимых артистов со всего мира</p>`;
     h += `<a class="feature" href="#underground" style="margin-top:22px"><div><div class="eyebrow">Подборка</div><div class="ft">Андеграунд-рэп</div><div class="fs">Рейдж, плагг, фонк, дрилл и трэп</div></div><div class="art" data-underground-art>${img('')}</div></a>`;
     h += section('Официальные чарты', lazy(cached('dz-chart:116', () => deezer.chart(116, 40), 6 * 3600e3), (l) => `<p class="note" style="margin:-4px 0 8px">Хип-хоп, мир · превью по 30 секунд</p>` + rowShelf(l.slice(0, 20)), skRows(4)));
-    h += section('Рэперы', `<ul class="menu"><li><a href="#rappers">${I.folder}<span>Папки рэперов А–Я</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
+    h += section('Рэперы', `<ul class="menu"><li><a href="#rappers">${I.folder}<span>Папки рэперов A–Z</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
     h += section('Чарты', `<ul class="menu">
       <li><a href="#chart/week">${I.note}<span>Топ-100 недели</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
       <li><a href="#chart/month">${I.note}<span>Топ-100 месяца</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
@@ -1682,7 +1734,7 @@ const views = {
   underground() {
     const lists = [['rage', 'Рейдж'], ['plugg', 'Плагг'], ['underground rap', 'Андеграунд'], ['phonk', 'Фонк'], ['drill', 'Дрилл'], ['emo rap', 'Эмо-рэп']];
     let h = backBtn('#browse') + `<h1 class="page-title">Андеграунд-рэп</h1><p class="page-sub">Независимые рэперы, которые сами выкладывают свою музыку</p>
-      <ul class="menu"><li><a href="#rappers">${I.folder}<span>Все рэперы: папки А–Я</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`;
+      <ul class="menu"><li><a href="#rappers">${I.folder}<span>Все рэперы: папки A–Z</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`;
     h += lazy(cached('au-genre:Hip-Hop/Rap:week', () => audius.trending({ genre: 'Hip-Hop/Rap', time: 'week', limit: 60 })), (l) => { const k = reg(l); return playActions(k) + section('Хип-хоп: хиты недели', rows(l.slice(0, 10), { key: k, showDur: true }), '#genre/' + encodeURIComponent('Hip-Hop/Rap')) + section('Рэперы недели', shelf(artistsOf(l, 14).map(card).join(''), 'small')); }, skRows(6));
     h += section('Трэп', lazy(cached('au-genre:Trap:week', () => audius.trending({ genre: 'Trap', time: 'week', limit: 60 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#genre/Trap');
     for (const [q, n] of lists) h += section(n, lazy(cached('au-pl:' + q, () => audius.search('playlists', q, 16)), (l) => l.length ? shelf(l.map(card).join('')) : '<p class="note">Пока пусто</p>'));
@@ -1703,8 +1755,8 @@ const views = {
         if (!l.length) { out.innerHTML = '<div class="empty"><b>Не нашлось</b>Попробуйте общий поиск: там больше артистов.</div>'; return; }
         if (q) { out.innerHTML = `<ul class="list">${l.map(folderRow).join('')}</ul>`; return; }
         const groups = new Map();
-        for (const a of l) { const ch = (a.name.trim()[0] || '#').toUpperCase(); const k = /\p{L}/u.test(ch) ? ch : '#'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
-        const parts = [...groups].sort((x, y) => (x[0] === '#') - (y[0] === '#')).map(([k, g]) => `<section class="section" style="margin-top:18px"><div class="sec-head"><h2>${esc(k)}</h2></div><ul class="list">${g.map(folderRow).join('')}</ul></section>`);
+        for (const a of l) { const ch = (a.name.trim().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')[0] || '#').toUpperCase(); const k = /[A-ZА-ЯЁ]/.test(ch) ? ch : '#'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+        const parts = [...groups].sort((x, y) => (x[0] === '#') - (y[0] === '#') || (/[A-Z]/.test(y[0]) - /[A-Z]/.test(x[0])) || x[0].localeCompare(y[0])).map(([k, g]) => `<section class="section" style="margin-top:18px"><div class="sec-head"><h2>${esc(k)}</h2></div><ul class="list">${g.map(folderRow).join('')}</ul></section>`);
         out.innerHTML = `<p class="page-sub">${list.length} ${plural(list.length, 'папка', 'папки', 'папок')}</p>` + parts.slice(0, 3).join('');
         /* the rest of the alphabet is added in small steps so the first screen shows at once */
         const job = ++drawJob;
@@ -1781,15 +1833,17 @@ const views = {
   settings() {
     view.innerHTML = backBtn('#library') + `<h1 class="page-title">Источники</h1><p class="page-sub">Только бесплатная и легальная музыка</p>
       <div class="group"><h3>Audius</h3><p class="note">Миллионы треков независимых артистов со всего мира: страницы артистов, альбомы, чарты по жанрам.</p><span class="state"><i></i>Подключено</span></div>
+      <div class="group"><h3>Deezer</h3><p class="note">Страницы известных артистов, альбомы, чарты и официальные превью по 30 секунд.</p><span class="state"><i></i>Подключено</span></div>
+      <div class="group"><h3>LRCLIB</h3><p class="note">Синхронные тексты песен.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Internet Archive</h3><p class="note">Независимые лейблы, живые концерты, старые пластинки.</p><span class="state"><i></i>Подключено</span></div>
       <div class="group"><h3>Radio Browser</h3><p class="note">Около 50 000 интернет-радиостанций из 200 стран.</p><span class="state"><i></i>Подключено</span></div>
       <form class="group" id="jmForm"><h3>Jamendo</h3>
         <p class="note">Ещё около 600 000 треков. Нужен бесплатный ключ: зарегистрируйтесь на <a class="text-btn" href="https://devportal.jamendo.com/" target="_blank" rel="noopener">devportal.jamendo.com</a>, создайте приложение и вставьте его Client ID.</p>
         <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(lib.settings.jamendo)}">
         <button class="btn solid" type="submit">Сохранить</button></form>
-      <p class="note" style="margin-top:18px">Версия ${APP_VERSION}</p>
       <div class="group"><h3>Скрытое</h3><p class="note">Альбомы: ${lib.hidden.albums.length}, треки: ${lib.hidden.tracks.length}. Скрытое не показывается нигде в приложении.</p><button class="btn" id="unhide">Показать всё скрытое</button></div>
       <div class="group"><h3>Данные</h3><p class="note">Избранное, плейлисты и файлы хранятся только в этом браузере.</p><button class="btn" id="wipe">Очистить историю</button></div>`;
+    view.insertAdjacentHTML('beforeend', `<p class="note" style="margin:22px 0 0;text-align:center">Note · версия ${APP_VERSION}</p>`);
     $('#jmForm').onsubmit = async (e) => {
       e.preventDefault();
       const key = $('#jmKey').value.trim();
@@ -1821,9 +1875,9 @@ function playlistCard(p) {
 function fillTileArt() {
   $$('[data-genre-art]').forEach((el) => {
     const g = el.dataset.genreArt;
-    cached('au-tile:' + g, () => audius.trending({ genre: g, time: 'week', limit: 3 }), 24 * 3600e3).then((l) => {
+    cached('au-tile:' + g, () => slow(() => audius.trending({ genre: g, time: 'week', limit: 3 })), 24 * 3600e3).then((l) => {
       const t = l.find((x) => x.art);
-      if (t && el.isConnected) el.insertAdjacentHTML('afterbegin', `<img src="${esc(t.art)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`);
+      if (t && el.isConnected) el.insertAdjacentHTML('afterbegin', `<img src="${esc(t.art)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noteImgErr(this)">`);
     }).catch(() => {});
   });
   $$('[data-archive-art]').forEach((el) => {
@@ -1835,6 +1889,7 @@ function fillTileArt() {
 }
 
 let searchSeq = 0;
+document.addEventListener('click', (e) => { if (e.target.closest('#results .hit, #results .card, #results .top-hit, #results [data-play]')) { const q = ($('#q') || {}).value; if (q && q.trim()) lib.pushSearch(q.trim()); } }, true);
 async function doSearch(q, commit) {
   try { sessionStorage.setItem('nota:q', q); } catch {}
   const out = $('#results');
@@ -1849,17 +1904,23 @@ async function doSearch(q, commit) {
     fillTileArt();
     return;
   }
-  if (commit || q.length > 2) lib.pushSearch(q);
+  if (commit) lib.pushSearch(q);
   const all = tab === 'all';
   const n = norm(q);
   /* starts with the query > contains it > anything else; popularity decides inside each group */
   const score = (name) => { const v = norm(name); return v.startsWith(n) ? 1 : v.includes(n) ? 2 : 3; };
   const byMatch = (l, key, pop) => l.slice().sort((x, y) => score(x[key]) - score(y[key]) || (y[pop] || 0) - (x[pop] || 0));
   const grid = (l) => all ? shelf(l.map(card).join('')) : `<div class="grid">${l.map(card).join('')}</div>`;
-  const dzArtists = cached('s-dza:' + q, () => deezer.searchArtists(q, all ? 10 : 30), 12 * 3600e3);
-  const dzTracks = cached('s-dzt:' + q, () => deezer.searchTracks(q, all ? 10 : 40), 12 * 3600e3);
-  const auUsers = cached('s-u:' + q, () => audius.search('users', q, 30));
-  const auTracks = cached('s-t:' + q, () => audius.search('tracks', q, all ? 20 : 60));
+  /* each tab asks only for what it shows; the size of the answer is part of the cache key */
+  const lim = (x, y) => (all ? x : y);
+  const want = (...tabs) => all || tabs.includes(tab);
+  const dzArtists = want('artists') ? cached(`s-dza:${lim(10, 30)}:` + q, () => deezer.searchArtists(q, lim(10, 30)), 12 * 3600e3) : null;
+  const dzTracks = want('tracks') ? cached(`s-dzt:${lim(10, 40)}:` + q, () => deezer.searchTracks(q, lim(10, 40)), 12 * 3600e3) : null;
+  const auUsers = want('artists') ? cached('s-u:' + q, () => slow(() => audius.search('users', q, 30))) : null;
+  const auTracks = want('tracks') ? cached(`s-t:${lim(20, 60)}:` + q, () => slow(() => audius.search('tracks', q, lim(20, 60)))) : null;
+  const waits = [];
+  const track = (p) => { if (p) waits.push(p); return p; };
+  [dzArtists, dzTracks, auUsers, auTracks].forEach(track);
   let h = '';
   if (all || tab === 'artists') {
     const mine = matchArtists(groupMine(await files.tracks()), q);
@@ -1872,21 +1933,32 @@ async function doSearch(q, commit) {
       const rest = (best ? l.slice(1) : l).filter((x) => x.fans >= 5000);
       return (best ? section('Лучший результат', best) : '') + (rest.length ? section('Артисты', all ? shelf(rest.map(card).join(''), 'small') : `<div class="grid">${rest.map(card).join('')}</div>`) : '');
     }, skShelf(4, 'small', true));
-    h += lazy(mapP(rapIndex(), (l) => matchArtists(l, q)), (l) => l.length ? section('Папки рэперов', `<ul class="list">${l.slice(0, all ? 4 : 60).map(folderRow).join('')}</ul>`, all && l.length > 4 ? '#rappers' : '') : '', '');
+    h += lazy(track(mapP(rapIndex(), (l) => matchArtists(l, q))), (l) => l.length ? section('Папки рэперов', `<ul class="list">${l.slice(0, all ? 4 : 60).map(folderRow).join('')}</ul>`, all && l.length > 4 ? '#rappers' : '') : '', '');
   }
   if (all || tab === 'tracks') {
     h += lazy(dzTracks, (l) => l.length ? section('Треки · превью', rows(all ? l.slice(0, 5) : l)) : '', skRows(all ? 4 : 10));
     h += lazy(auTracks, (l) => l.length ? section('Полные треки независимых артистов', rows(all ? l.slice(0, 5) : l, { showDur: true })) : (all ? '' : ''), all ? '' : skRows(6));
-    if (jamendo.on) h += lazy(cached('s-jm:' + q, () => jamendo.tracks({ search: q, order: 'relevance' })), (l) => l.length ? section('Jamendo', rows(all ? l.slice(0, 5) : l, { showDur: true })) : '', '');
+    if (jamendo.on) h += lazy(track(cached('s-jm:' + q, () => jamendo.tracks({ search: q, order: 'relevance' }))), (l) => l.length ? section('Jamendo', rows(all ? l.slice(0, 5) : l, { showDur: true })) : '', '');
   }
   if (all || tab === 'albums') {
-    h += lazy(cached('s-dzal:' + q, () => deezer.searchAlbums(q, 24), 12 * 3600e3), (l) => l.length ? section('Альбомы', grid(l)) : '', all ? skShelf(4) : skGrid(4));
-    h += lazy(cached('s-p:' + q, () => audius.search('playlists', q, 24)), (l) => l.length ? section('Плейлисты', grid(byMatch(l, 'title', 'count'))) : '', '');
-    h += lazy(cached('s-ia2:' + q, () => archive.find(q, 30)), (l) => l.length ? section('Internet Archive', grid(l)) : '', '');
+    h += lazy(track(cached('s-dzal:' + q, () => deezer.searchAlbums(q, 24), 12 * 3600e3)), (l) => l.length ? section('Альбомы', grid(l)) : '', all ? skShelf(4) : skGrid(4));
+    h += lazy(track(cached('s-p:' + q, () => slow(() => audius.search('playlists', q, 24)))), (l) => l.length ? section('Плейлисты', grid(byMatch(l, 'title', 'count'))) : '', '');
+    h += lazy(track(cached('s-ia2:' + q, () => archive.find(q, 30))), (l) => l.length ? section('Internet Archive', grid(l)) : '', '');
   }
   if (all || tab === 'artists') h += lazy(mapP(auUsers, (l) => byMatch(l, 'name', 'followers').filter((a) => score(a.name) < 3).slice(0, all ? 12 : 40)), (l) => l.length ? section('Независимые артисты', all ? shelf(l.map(card).join(''), 'small') : `<div class="grid">${l.map(card).join('')}</div>`) : '', '');
-  if (all || tab === 'radio') h += lazy(cached('s-r:' + q, () => Promise.all([radio.search({ name: q, limit: 20 }), radio.search({ tag: q.toLowerCase(), limit: 20 })]).then(([a, b]) => { const s2 = new Set(); return [...a, ...b].filter((t) => !s2.has(t.id) && s2.add(t.id)); })), (l) => l.length ? section('Радиостанции', rows(all ? l.slice(0, 4) : l)) : (all ? '' : '<div class="empty"><b>Станций не нашлось</b></div>'), all ? '' : skRows(8));
-  if (seq === searchSeq) out.innerHTML = h || '<div class="empty"><b>Ничего не нашлось</b>Проверьте написание или попробуйте другой запрос.</div>';
+  if (all || tab === 'radio') h += lazy(track(cached('s-r:' + q, () => Promise.all([radio.search({ name: q, limit: 20 }), radio.search({ tag: q.toLowerCase(), limit: 20 })]).then(([a, b]) => { const s2 = new Set(); return [...a, ...b].filter((t) => !s2.has(t.id) && s2.add(t.id)); }))), (l) => l.length ? section('Радиостанции', rows(all ? l.slice(0, 4) : l)) : (all ? '' : '<div class="empty"><b>Станций не нашлось</b></div>'), all ? '' : skRows(8));
+  if (seq !== searchSeq) return;
+  out.innerHTML = h;
+  out.querySelectorAll('.err').forEach((e) => e.remove());
+  /* once every source has answered: one clear message instead of an empty page or a pile of errors */
+  Promise.allSettled(waits).then((res) => {
+    if (seq !== searchSeq || !out.isConnected) return;
+    out.querySelectorAll('.err').forEach((e) => e.remove());
+    if (out.querySelector('.row, .card, .top-hit')) return;
+    out.innerHTML = res.length && res.every((r) => r.status === 'rejected')
+      ? '<div class="empty"><b>Нет связи</b>Проверьте интернет и попробуйте ещё раз.<br><button class="btn slim" data-retry>Повторить</button></div>'
+      : '<div class="empty"><b>Ничего не нашлось</b>Проверьте написание или попробуйте другой запрос.</div>';
+  });
 }
 
 /* start loading a page's data the moment a finger touches its link */
@@ -1978,7 +2050,9 @@ files.loadCovers().then(() => { if (P.cur && P.cur.src === 'local') renderNow();
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   const had = !!navigator.serviceWorker.controller;
   let reloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded) { reloaded = true; location.reload(); } });
+  /* a new version is picked up without cutting off a song: reload only when nothing is playing */
+  const reloadSoon = () => { if (reloaded) return; if (audio.paused) { reloaded = true; savePos(); location.reload(); } else audio.addEventListener('pause', reloadSoon, { once: true }); };
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) reloadSoon(); });
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
     /* look for a new version every time the app comes back to the screen */
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
