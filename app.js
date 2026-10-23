@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '27 · 23.10.2026';
+const APP_VERSION = '28 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -870,15 +870,17 @@ function parseLrc(text) {
   for (const line of String(text).split(/\r?\n/)) {
     const stamps = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
     if (!stamps.length) continue;
-    const words = line.replace(/\[[^\]]*\]/g, '').trim();
-    for (const m of stamps) out.push({ t: +m[1] * 60 + +m[2], text: words });
+    const body = line.replace(/\[[^\]]*\]/g, '');
+    const tagged = [...body.matchAll(/<(\d+):(\d+(?:\.\d+)?)>\s*([^<]*)/g)].map((w) => ({ s: +w[1] * 60 + +w[2], w: w[3].trim() })).filter((w) => w.w);
+    const words = body.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    for (const m of stamps) out.push(tagged.length ? { t: +m[1] * 60 + +m[2], text: words, w: tagged } : { t: +m[1] * 60 + +m[2], text: words });
   }
   return out.sort((a, b) => a.t - b.t);
 }
 const cleanTitle = (x) => String(x).replace(/\s*[([](feat|ft|with|prod|prod\.)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').replace(/\s*\[[^\]]*\]\s*$/, '').trim();
 const firstArtist = (x) => String(x || '').split(/,|\s(?:feat\.?|ft\.?|&|x|and)\s/i)[0].trim();
 function fetchLyrics(t) {
-  return cached('lyr3:' + t.id, async () => {
+  return cached('lyr4:' + t.id, async () => {
     /* candidates: the track's own artist/title, and "Artist - Title" written inside the title */
     const cands = [{ a: firstArtist(t.artist), t: cleanTitle(t.title) }];
     const m = String(t.title).match(/^(.+?)\s[-–]\s(.+)$/);
@@ -903,9 +905,9 @@ function fetchLyrics(t) {
   }, 30 * 24 * 3600e3);
   function pack(d) { return { synced: d.syncedLyrics ? parseLrc(d.syncedLyrics) : null, plain: d.plainLyrics || '', inst: !!d.instrumental }; }
 }
-const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '' };
+const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '', words: {}, activeEl: null };
 function loadLyrics(t) {
-  lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : '';
+  lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : ''; lyr.words = {}; lyr.activeEl = null;
   $('#player').classList.remove('has-sub');
   $('#lyricsBtn').classList.toggle('none', !t || !!t.live);
   showMiniLyric('');
@@ -921,6 +923,34 @@ function loadLyrics(t) {
     syncLyrics(true);
   }, () => { if (lyr.open) drawLyrics(); });
 }
+function lineWords(i) {
+  const lines = lyr.lines, line = lines[i];
+  if (!line || !line.text) return [];
+  if (lyr.words[i]) return lyr.words[i];
+  const toks = line.text.split(' ').filter(Boolean);
+  let out;
+  if (line.w && line.w.length) {
+    out = line.w.map((w, k) => ({ w: w.w, s: w.s, e: k + 1 < line.w.length ? line.w[k + 1].s : Math.min(lines[i + 1] ? lines[i + 1].t : w.s + 1.5, w.s + 1.5) }));
+  } else {
+    const next = lines[i + 1] ? lines[i + 1].t : line.t + 6;
+    const end = Math.min(next - 0.1, line.t + Math.max(1.4, line.text.length * 0.085));
+    const total = toks.reduce((n, w) => n + w.length + 1.5, 0);
+    let at = line.t;
+    out = toks.map((w) => { const d = ((w.length + 1.5) / total) * (end - line.t); const r = { w, s: at, e: at + d }; at += d; return r; });
+  }
+  return (lyr.words[i] = out);
+}
+const wordSpans = (ws) => ws.map((x) => `<span class="w">${esc(x.w)}</span>`).join(' ');
+/* fill each word of the current line as it is sung */
+function paintWords(el, ws, c) {
+  if (!el) return;
+  const spans = el.querySelectorAll('.w');
+  for (let k = 0; k < spans.length && k < ws.length; k++) {
+    const p = Math.min(1, Math.max(0, (c - ws[k].s) / Math.max(0.05, ws[k].e - ws[k].s)));
+    const q = Math.round(p * 50) / 50;
+    if (spans[k]._p !== q) { spans[k]._p = q; spans[k].style.setProperty('--p', q); }
+  }
+}
 function drawLyrics() {
   const box = $('#lyrics'), inner = $('#lyrInner'), t = P.cur, d = lyr.data;
   inner.style.transition = 'none'; inner.style.transform = '';
@@ -932,7 +962,7 @@ function drawLyrics() {
   if (d.inst) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
   if (d.none || (!d.synced && !d.plain)) { inner.innerHTML = `<p class="lyr-state">Текста этой песни нет в базе текстов.<br><br>Тексты есть у большинства известных песен. У независимых артистов и электронной музыки их обычно нет.</p>`; return; }
   if (lyr.lines) {
-    inner.innerHTML = lyr.lines.map((l) => `<button class="lyr-line${l.text ? '' : ' gap'}" data-lt="${l.t}">${l.text ? esc(l.text) : '•  •  •'}</button>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
+    inner.innerHTML = lyr.lines.map((l, i) => `<button class="lyr-line${l.text ? '' : ' gap'}" data-lt="${l.t}">${l.text ? wordSpans(lineWords(i)) : '<span class="dots"><i></i><i></i><i></i></span>'}</button>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
   } else {
     box.classList.add('plain');
     const text = d.plain || (d.synced || []).map((l) => l.text).join('\n');
@@ -941,9 +971,9 @@ function drawLyrics() {
   lyr.idx = -2;
   syncLyrics(true);
 }
-function showMiniLyric(text) {
+function showMiniLyric(text, i) {
   const bl = $('#bigLyric');
-  bl.textContent = text || '';
+  bl.innerHTML = text ? wordSpans(i != null && lyr.lines ? lineWords(i) : text.split(' ').map((w) => ({ w }))) : '';
   bl.classList.toggle('on', !!text);
   const ml = $('#miniLyric'), ma = $('#miniArtist');
   if (!text) { if (!ml.hidden) { ml.hidden = true; ma.hidden = false; } return; }
@@ -954,16 +984,27 @@ function showMiniLyric(text) {
 function syncLyrics(force) {
   const lines = lyr.lines;
   if (!lines || !P.cur) return;
-  const c = (pendingSeek != null ? pendingSeek : audio.currentTime - segStart()) + 0.3;
+  const now = pendingSeek != null ? pendingSeek : audio.currentTime - segStart();
+  const c = now + 0.3;
   let i = -1;
   for (let k = 0; k < lines.length && lines[k].t <= c; k++) i = k;
-  if (i === lyr.idx && !force) return;
-  lyr.idx = i;
-  showMiniLyric(i >= 0 ? lines[i].text : '');
-  if (!lyr.open) return;
+  if (i !== lyr.idx || force) {
+    lyr.idx = i;
+    showMiniLyric(i >= 0 ? lines[i].text : '', i);
+    if (lyr.open) moveLyrics(i);
+  }
+  /* word by word, every frame while the player is open */
+  if (i >= 0 && lines[i].text) {
+    const ws = lineWords(i);
+    paintWords($('#bigLyric'), ws, now + 0.05);
+    if (lyr.open) paintWords(lyr.activeEl, ws, now + 0.05);
+  }
+}
+function moveLyrics(i) {
   const els = $('#lyrInner').querySelectorAll('.lyr-line');
-  els.forEach((el, k) => { el.classList.toggle('on', k === i); el.classList.toggle('near', Math.abs(k - i) === 1); });
+  els.forEach((el, k) => { el.classList.toggle('on', k === i); el.classList.toggle('near', Math.abs(k - i) === 1); el.classList.toggle('past', k < i); });
   const el = els[Math.max(0, i)];
+  lyr.activeEl = i >= 0 ? els[i] : null;
   if (el) $('#lyrInner').style.transform = `translate3d(0,${Math.min(0, $('#lyrics').clientHeight * 0.3 - el.offsetTop)}px,0)`;
 }
 function setLyricsOpen(on) {
@@ -1205,10 +1246,27 @@ const playerEl = $('#player');
 function openPlayer() {
   if (!P.cur) return;
   playerEl.style.transition = ''; playerEl.style.transform = '';
+  const from = $('#miniArt').getBoundingClientRect();
   playerEl.hidden = false;
   document.documentElement.style.overflow = 'hidden';
+  flyCover(from);
   requestAnimationFrame(fitTitle);
   startTick();
+}
+function flyCover(from) {
+  const stage = $('#stage');
+  if (!stage.animate || !from.width || matchMedia('(prefers-reduced-motion: reduce)').matches || $('#player').classList.contains('lyrics-on')) return;
+  playerEl.classList.add('flying');
+  requestAnimationFrame(() => {
+    const to = stage.getBoundingClientRect();
+    if (!to.width) { playerEl.classList.remove('flying'); return; }
+    const sc = from.width / to.width;
+    const end = getComputedStyle(stage).transform;
+    stage.animate([
+      { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${sc})`, borderRadius: `${10 / sc}px` },
+      { transform: end === 'none' ? 'none' : end, borderRadius: '18px' },
+    ], { duration: 560, easing: 'cubic-bezier(.32,.72,0,1)' }).finished.finally(() => playerEl.classList.remove('flying'));
+  });
 }
 function hidePlayer() {
   playerEl.hidden = true;
