@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '34 · 23.10.2026';
+const APP_VERSION = '35 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -167,7 +167,7 @@ const lib = {
   stations: store.get('stations', []),
   artists: store.get('artists', []),
   searches: store.get('searches', []),
-  settings: store.get('settings', { jamendo: '' }),
+  settings: { jamendo: '', quality: 'high', glass: true, motion: true, sub: true, karaoke: true, fullOnly: false, ...store.get('settings', {}) },
   hidden: (() => {
     const h = store.get('hidden', null) || { albums: [], tracks: [], artists: [] };
     /* album the owner asked to remove (cover not suitable for the app) */
@@ -191,6 +191,7 @@ const lib = {
   isHidden(x) {
     if (!x) return false;
     const h = this.hidden;
+    if (this.settings.fullOnly && x.preview) return true;
     if ((x.kind === 'au-album' || x.kind === 'dz-album' || x.kind === 'ia-album') && h.albums.includes(String(x.id))) return true;
     if (x.kind === 'artist' && h.artists.includes(x.id)) return true;
     if (x.kind === 'au-album' && x.artistId && h.artists.includes(x.artistId)) return true;
@@ -589,8 +590,17 @@ const archive = {
     const art = coverFile ? `https://archive.org/download/${encodeURIComponent(id)}/${coverFile.name.split('/').map(encodeURIComponent).join('/')}` : this.cover(id);
     const title = first(m.title) || id;
     const artist = first(m.creator) || first(m.artist) || '';
+    const fileUrl = (name) => `https://archive.org/download/${encodeURIComponent(id)}/${name.split('/').map(encodeURIComponent).join('/')}`;
+    const names = new Set(d.files.map((x) => x.name));
+    /* the same song in other sizes: lossless original and a small 64 kbps copy, for the sound quality setting */
+    const altsOf = (x) => {
+      const base = x.name.replace(/\.[^.]+$/, '').replace(/_(vbr|64kb|128kb)$/i, ''), a = {};
+      if (names.has(base + '.flac')) a.flac = fileUrl(base + '.flac');
+      if (names.has(base + '_64kb.mp3')) a.low = fileUrl(base + '_64kb.mp3');
+      return a;
+    };
     const tracks = (fmtOk ? d.files.filter((x) => x.format === fmtOk) : [])
-      .map((x) => ({
+      .map((x) => ({ alts: altsOf(x),
         id: `ia:${id}/${x.name}`, src: 'archive', albumId: id, album: title, art,
         title: first(x.title) || x.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '),
         artist: first(x.artist) || first(x.creator) || artist || 'Internet Archive',
@@ -766,6 +776,7 @@ const P = {
       try { url = await deezer.fresh(t); } catch { toast('Превью недоступно'); return this.skipAfterError(); }
       if (this.queue[this.idx] !== t) return;
     }
+    if (t.alts) url = (lib.settings.quality === 'max' && t.alts.flac) || (lib.settings.quality === 'save' && t.alts.low) || url;
     audio.src = url;
     renderNow();
     try { await audio.play(); } catch (e) { if (e.name !== 'AbortError') renderPlayState(); }
@@ -784,6 +795,7 @@ const P = {
   },
   next(auto = false) {
     if (!this.queue.length) return;
+    if (auto && sleep.atEnd) { sleep.stop(); audio.pause(); renderPlayState(); toast('Таймер сна: музыка остановлена'); return; }
     if (auto && this.repeat === 'one') return this.play(this.idx);
     if (this.idx + 1 < this.queue.length) return this.play(this.idx + 1);
     if (this.repeat === 'all' || !auto) return this.play(0);
@@ -1019,6 +1031,7 @@ function drawLyrics() {
   syncLyrics(true);
 }
 function showMiniLyric(text, i) {
+  if (!lib.settings.sub) text = '';
   const bl = $('#bigLyric');
   bl.innerHTML = text ? wordSpans(i != null && lyr.lines ? lineWords(i) : text.split(' ').map((w) => ({ w }))) : '';
   bl.classList.toggle('on', !!text);
@@ -1607,7 +1620,7 @@ const views = {
       return heroCard(list[0]) + (list.length > 1 ? section('Альбомы недели', shelf(list.slice(1, 12).map(card).join(''))) : '');
     }, `<div class="hero-card sk"></div>`);
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
-    h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => rowShelf(l.slice(0, 20)), skRows(4)));
+    if (!lib.settings.fullOnly) h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => rowShelf(l.slice(0, 20)), skRows(4)));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
     h += section('Артисты недели', lazy(mapP(trendingWeek(), (t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)));
     h += section('Андеграунд-рэп', lazy(cached('au-pl:rage', () => audius.search('playlists', 'rage', 16)), (l) => shelf(l.map(card).join(''))), '#underground');
@@ -1709,7 +1722,7 @@ const views = {
   album(id) {
     id = decodeURIComponent(id || '');
     view.innerHTML = backBtn() + `<div class="hero"><div class="art sk"></div></div>` + skRows(6);
-    whenReady(cached('ia-album:' + id, () => archive.album(id)), (a) => {
+    whenReady(cached('ia-album2:' + id, () => archive.album(id)), (a) => {
       if (decodeURIComponent(location.hash.slice(7)) !== id) return;
       const k = reg(a.tracks);
       const total = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
@@ -1784,7 +1797,7 @@ const views = {
         <li><a href="#library/artists">${I.person}<span>Артисты</span><span class="cnt">${lib.artists.length || ''}</span>${chev}</a></li>
         <li><a href="#library/stations">${I.radio}<span>Мои станции</span><span class="cnt">${lib.stations.length || ''}</span>${chev}</a></li>
         <li><a href="#mine">${I.folder}<span>Моя музыка</span>${chev}</a></li>
-        <li><a href="#settings">${I.gear}<span>Источники</span>${chev}</a></li>
+        <li><a href="#settings">${I.gear}<span>Настройки</span>${chev}</a></li>
       </ul>` +
       section('Плейлисты', `<div class="grid"><button class="card" id="newPl"><div class="art"><div class="ph" style="color:var(--accent)">${I.plus}</div></div><span class="t1">Новый плейлист</span><span class="t2">&nbsp;</span></button>${lib.playlists.map(playlistCard).join('')}</div>`) +
       (lib.recent.length ? section('Недавно играло', rows(lib.recent.slice(0, 20))) : '');
@@ -1940,40 +1953,135 @@ const views = {
   },
 
   settings() {
-    view.innerHTML = backBtn('#library') + `<h1 class="page-title">Источники</h1><p class="page-sub">Только бесплатная и легальная музыка</p>
-      <div class="group"><h3>Audius</h3><p class="note">Миллионы треков независимых артистов со всего мира: страницы артистов, альбомы, чарты по жанрам.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>Оформление</h3><div class="skins">${[['noir', 'Ночь'], ['classic', 'Классика'], ['aurora', 'Аврора']].map(([k, n]) => `<button class="skin${document.documentElement.dataset.skin === k ? ' on' : ''}" data-skin="${k}"><i></i>${n}</button>`).join('')}</div></div>
-      <div class="group"><h3>Deezer</h3><p class="note">Страницы известных артистов, альбомы, чарты и официальные превью по 30 секунд.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>LRCLIB</h3><p class="note">Синхронные тексты песен.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>Internet Archive</h3><p class="note">Независимые лейблы, живые концерты, старые пластинки.</p><span class="state"><i></i>Подключено</span></div>
-      <div class="group"><h3>Radio Browser</h3><p class="note">Около 50 000 интернет-радиостанций из 200 стран.</p><span class="state"><i></i>Подключено</span></div>
+    const st = lib.settings;
+    const pref = ['auto', 'noir', 'classic', 'aurora'].includes(store.get('skin')) ? store.get('skin') : 'noir';
+    const sw = (k, title, note) => `<label class="set-row"><span><b>${title}</b>${note ? `<small>${note}</small>` : ''}</span><input type="checkbox" class="switch" data-set="${k}"${st[k] ? ' checked' : ''}></label>`;
+    const choice = (attr, cur, list) => `<div class="choice">${list.map(([v, n]) => `<button class="${v === cur ? 'on' : ''}" data-${attr}="${v}">${n}</button>`).join('')}</div>`;
+    const src = (name, note) => `<div class="src-row"><span><b>${name}</b><small>${note}</small></span><i></i></div>`;
+    view.innerHTML = backBtn('#library') + `<h1 class="page-title">Настройки</h1>
+      <h2 class="set-h">Оформление</h2>
+      <div class="group"><h3>Тема</h3><div class="skins four">${[['auto', 'Как в системе'], ['noir', 'Ночь'], ['classic', 'Классика'], ['aurora', 'Аврора']].map(([k, n]) => `<button class="skin${pref === k ? ' on' : ''}" data-skin="${k}"><i></i>${n}</button>`).join('')}</div></div>
+      <div class="group">
+        ${sw('glass', 'Жидкое стекло', 'Прозрачное меню и мини-плеер. Выключите, если телефон греется или тормозит.')}
+        ${sw('motion', 'Анимации', 'Пружинки при нажатии, капля под вкладкой, плавное открытие плеера.')}
+      </div>
+      <h2 class="set-h">Звук</h2>
+      <div class="group"><h3>Качество</h3>
+        ${choice('q', st.quality, [['max', 'Максимальное'], ['high', 'Высокое'], ['save', 'Экономия']])}
+        <p class="note" id="qNote"></p></div>
+      <div class="group">
+        ${sw('fullOnly', 'Только полные песни', 'Скрыть превью по 30 секунд из Deezer: в чартах, у артистов и в поиске.')}
+      </div>
+      <div class="group"><h3>Таймер сна</h3>
+        ${choice('sleep', sleep.mode, [['0', 'Выкл'], ['15', '15 мин'], ['30', '30 мин'], ['60', '1 час'], ['end', 'После трека']])}
+        <p class="note" id="sleepNote"></p></div>
+      <h2 class="set-h">Текст песен</h2>
+      <div class="group">
+        ${sw('sub', 'Строка текста под названием', 'В плеере и мини-плеере видна строка, которая сейчас поётся.')}
+        ${sw('karaoke', 'Подсветка по словам', 'Слова заполняются по мере пения, как караоке. Если выключить, подсвечивается вся строка.')}
+      </div>
+      <h2 class="set-h">Источники</h2>
+      <div class="group src">
+        ${src('Audius', 'Миллионы треков независимых артистов, полностью')}
+        ${src('Internet Archive', 'Независимые лейблы, концерты, старые пластинки, полностью')}
+        ${src('Deezer', 'Известные артисты, альбомы, чарты, превью по 30 секунд')}
+        ${src('Radio Browser', 'Около 50 000 радиостанций из 200 стран')}
+        ${src('LRCLIB', 'Синхронные тексты песен')}
+      </div>
       <form class="group" id="jmForm"><h3>Jamendo</h3>
         <p class="note">Ещё около 600 000 треков. Нужен бесплатный ключ: зарегистрируйтесь на <a class="text-btn" href="https://devportal.jamendo.com/" target="_blank" rel="noopener">devportal.jamendo.com</a>, создайте приложение и вставьте его Client ID.</p>
-        <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(lib.settings.jamendo)}">
+        <input class="text" id="jmKey" placeholder="Client ID" autocomplete="off" value="${esc(st.jamendo)}">
         <button class="btn solid" type="submit">Сохранить</button></form>
+      <h2 class="set-h">Данные</h2>
       <div class="group"><h3>Скрытое</h3><p class="note">Альбомы: ${lib.hidden.albums.length}, треки: ${lib.hidden.tracks.length}. Скрытое не показывается нигде в приложении.</p><button class="btn" id="unhide">Показать всё скрытое</button></div>
-      <div class="group"><h3>Данные</h3><p class="note">Избранное, плейлисты и файлы хранятся только в этом браузере.</p><button class="btn" id="wipe">Очистить историю</button></div>`;
-    view.insertAdjacentHTML('beforeend', `<p class="note" style="margin:22px 0 0;text-align:center">Note · версия ${APP_VERSION}</p>`);
+      <div class="group"><h3>Память</h3><p class="note" id="memNote">Считаю…</p>
+        <button class="btn" id="wipe">Очистить историю и поиски</button>
+        <button class="btn" id="wipeCache">Очистить кэш обложек и списков</button></div>
+      <p class="note" style="margin:22px 0 0;text-align:center">Note · версия ${APP_VERSION}<br>Избранное, плейлисты и файлы хранятся только на этом устройстве.</p>`;
+    const qNotes = {
+      max: 'Internet Archive отдаёт оригинал без потерь (FLAC), если он есть. Это в 5–10 раз больше трафика.',
+      high: 'Обычный MP3 хорошего качества. Подходит почти всегда.',
+      save: 'Internet Archive отдаёт копию 64 кбит/с, если она есть. Меньше трафика, звук проще.',
+    };
+    const qNote = () => { $('#qNote').textContent = qNotes[st.quality] + ' Audius, Deezer и радио всегда приходят в одном качестве — его задаёт сам сервис.'; };
+    qNote();
+    const sleepNote = () => { $('#sleepNote').textContent = sleep.label(); };
+    sleepNote();
     $$('[data-skin]', view).forEach((b) => b.onclick = () => { setSkin(b.dataset.skin); $$('[data-skin]', view).forEach((x) => x.classList.toggle('on', x === b)); });
+    $$('[data-q]', view).forEach((b) => b.onclick = () => { st.quality = b.dataset.q; lib.save('settings'); $$('[data-q]', view).forEach((x) => x.classList.toggle('on', x === b)); qNote(); toast('Качество применится со следующего трека'); });
+    $$('[data-sleep]', view).forEach((b) => b.onclick = () => { sleep.set(b.dataset.sleep); $$('[data-sleep]', view).forEach((x) => x.classList.toggle('on', x === b)); sleepNote(); });
+    $$('[data-set]', view).forEach((c) => c.onchange = () => {
+      st[c.dataset.set] = c.checked; lib.save('settings'); applySettings();
+      if (c.dataset.set === 'sub') syncLyrics(true);
+    });
     $('#jmForm').onsubmit = async (e) => {
       e.preventDefault();
       const key = $('#jmKey').value.trim();
-      lib.settings.jamendo = key; lib.save('settings');
+      st.jamendo = key; lib.save('settings');
       if (!key) return toast('Jamendo отключён');
       try { await jamendo.tracks({ limit: 1 }); toast('Jamendo подключён'); } catch { toast('Ключ не подошёл'); }
     };
     $('#unhide').onclick = () => { lib.hidden = { albums: [], tracks: [], artists: [], seeded: true, seeded2: true }; lib.save('hidden'); toast('Скрытое снова видно'); route(); };
     $('#wipe').onclick = () => { lib.recent = []; lib.searches = []; lib.save('recent'); lib.save('searches'); toast('История очищена'); };
+    const mem = async () => {
+      let t = 'Кэш помогает быстро открывать экраны и обложки без интернета.';
+      try { const e = await navigator.storage.estimate(); t = `Занято около ${Math.max(1, Math.round((e.usage || 0) / 1048576))} МБ (обложки, списки, ваши файлы). ` + t; } catch {}
+      if ($('#memNote')) $('#memNote').textContent = t;
+    };
+    mem();
+    $('#wipeCache').onclick = async () => {
+      for (const k of Object.keys(localStorage)) if (k.startsWith('nota:c:')) localStorage.removeItem(k);
+      try { await caches.delete('nota-img-v1'); } catch {}
+      toast('Кэш очищен'); mem();
+    };
+    syncSleepUi = sleepNote;
   },
 };
 
-/* app look: Ночь (dark), Классика (light), Аврора (violet glow) */
-function setSkin(k) {
+/* sleep timer: stop the music after some minutes or when the current song ends */
+let syncSleepUi = null;
+const sleep = {
+  mode: '0', at: 0, timer: 0, atEnd: false,
+  set(m) {
+    this.stop(); this.mode = m;
+    if (m === 'end') { this.atEnd = true; toast('Музыка остановится после этого трека'); }
+    else if (+m) {
+      this.at = Date.now() + m * 60e3;
+      this.timer = setInterval(() => {
+        if (Date.now() >= this.at) { this.stop(); audio.pause(); renderPlayState(); toast('Таймер сна: музыка остановлена'); }
+        if (syncSleepUi && $('#sleepNote')) syncSleepUi();
+      }, 15e3);
+      toast(`Музыка остановится через ${m} мин`);
+    }
+  },
+  stop() { clearInterval(this.timer); this.timer = 0; this.at = 0; this.atEnd = false; this.mode = '0'; $$('[data-sleep]').forEach((x) => x.classList.toggle('on', x.dataset.sleep === '0')); if (syncSleepUi && $('#sleepNote')) syncSleepUi(); },
+  label() {
+    if (this.atEnd) return 'Музыка остановится, когда закончится текущий трек.';
+    if (this.at) return `Музыка остановится через ${Math.max(1, Math.ceil((this.at - Date.now()) / 60e3))} мин.`;
+    return 'Выключен.';
+  },
+};
+
+/* settings that change the look: glass, motion, karaoke */
+function applySettings() {
+  const c = document.documentElement.classList, st = lib.settings;
+  c.toggle('no-glass', !st.glass);
+  c.toggle('no-motion', !st.motion);
+  c.toggle('no-karaoke', !st.karaoke);
+  c.toggle('no-sub', !st.sub);
+}
+applySettings();
+
+/* app look: Ночь (dark), Классика (light), Аврора (violet glow), or follow the phone's light/dark mode */
+const darkMQ = matchMedia('(prefers-color-scheme: light)');
+function setSkin(pref) {
+  store.set('skin', pref);
+  const k = pref === 'auto' ? (darkMQ.matches ? 'classic' : 'noir') : pref;
   document.documentElement.dataset.skin = k;
-  store.set('skin', k);
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = { noir: '#050506', classic: '#ffffff', aurora: '#0a0714' }[k] || '#050506';
 }
+darkMQ.addEventListener('change', () => { if (store.get('skin', 'noir') === 'auto') setSkin('auto'); });
 function mosaic(tracks) {
   const arts = [...new Set(tracks.map((t) => t.art).filter(Boolean))].slice(0, 4);
   if (arts.length < 4) return img(arts[0]);
@@ -2054,7 +2162,7 @@ async function doSearch(q, commit) {
     h += lazy(track(mapP(rapIndex(), (l) => matchArtists(l, q))), (l) => l.length ? section('Папки рэперов', `<ul class="list">${l.slice(0, all ? 4 : 60).map(folderRow).join('')}</ul>`, all && l.length > 4 ? '#rappers' : '') : '', '');
   }
   if (all || tab === 'tracks') {
-    h += lazy(dzTracks, (l) => l.length ? section('Треки · превью', rows(all ? l.slice(0, 5) : l)) : '', skRows(all ? 4 : 10));
+    h += lazy(dzTracks, (l) => (l = l.filter((x) => !lib.isHidden(x))).length ? section('Треки · превью', rows(all ? l.slice(0, 5) : l)) : '', skRows(all ? 4 : 10));
     h += lazy(auTracks, (l) => l.length ? section('Полные треки независимых артистов', rows(all ? l.slice(0, 5) : l, { showDur: true })) : (all ? '' : ''), all ? '' : skRows(6));
     if (jamendo.on) h += lazy(track(cached('s-jm:' + q, () => jamendo.tracks({ search: q, order: 'relevance' }))), (l) => l.length ? section('Jamendo', rows(all ? l.slice(0, 5) : l, { showDur: true })) : '', '');
   }
@@ -2087,7 +2195,7 @@ function prefetch(h) {
   else if (name === 'artist') { cached('au-user:' + arg, () => audius.artist(arg)).catch(() => {}); cached('au-utracks:' + arg, () => audius.artistTracks(arg)).catch(() => {}); }
   else if (name === 'dz') cached('dz-artist:' + arg, () => deezer.artistPage(arg), 12 * 3600e3).catch(() => {});
   else if (name === 'dza') cached('dz-album:' + arg, () => deezer.albumPage(arg), 12 * 3600e3).catch(() => {});
-  else if (name === 'album') { const id = decodeURIComponent(arg); cached('ia-album:' + id, () => archive.album(id)).catch(() => {}); }
+  else if (name === 'album') { const id = decodeURIComponent(arg); cached('ia-album2:' + id, () => archive.album(id)).catch(() => {}); }
 }
 document.addEventListener('pointerdown', (e) => { const a = e.target.closest('a[href^="#"]'); if (a) prefetch(a.getAttribute('href')); }, { passive: true });
 
