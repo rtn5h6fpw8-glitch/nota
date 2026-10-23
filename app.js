@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '31 · 23.10.2026';
+const APP_VERSION = '32 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -177,6 +177,14 @@ const lib = {
       h.tracks.push(...['ryaoRKN', 'Qbdo8p1', '2GR5MNZ', '0dJ8K1M', 'RNq4Zyw', 'laVB0l6', 'ljqm78N', 'YavJyBp', 'NolA7Mx', 'Wg5q12Z', 'ByvQybY', '805wG39'].map((x) => 'au:' + x));
       store.set('hidden', h);
     }
+    /* second album the owner asked to remove, together with its artist */
+    if (!h.seeded2) {
+      h.seeded2 = true;
+      h.albums.push('GxBPpPb');
+      h.artists.push('6pgPWZ');
+      h.tracks.push(...['ZrE1WwQ', 'BKExAXx', 'R0w6mBG', 'ZPPWXKv', 'Jp6q840', 'Jmb0x6'].map((x) => 'au:' + x));
+      store.set('hidden', h);
+    }
     return h;
   })(),
   save(k) { store.set(k, this[k]); },
@@ -185,6 +193,7 @@ const lib = {
     const h = this.hidden;
     if ((x.kind === 'au-album' || x.kind === 'dz-album' || x.kind === 'ia-album') && h.albums.includes(String(x.id))) return true;
     if (x.kind === 'artist' && h.artists.includes(x.id)) return true;
+    if (x.kind === 'au-album' && x.artistId && h.artists.includes(x.artistId)) return true;
     if (!x.kind && (h.tracks.includes(x.id) || (x.artistId && h.artists.includes(x.artistId)) || (x.alId && h.albums.includes(x.alId)))) return true;
     return false;
   },
@@ -2091,7 +2100,7 @@ window.addEventListener('scroll', () => {
   if (v > 2.2) { document.body.classList.add('fast'); clearTimeout(fastTimer); fastTimer = setTimeout(() => document.body.classList.remove('fast'), 180); }
 }, { passive: true });
 /* desktop only: a soft glowing cursor dot and a background that follows the mouse a little */
-if (matchMedia('(pointer: fine)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+if (matchMedia('(hover: hover) and (pointer: fine)').matches && !navigator.maxTouchPoints && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
   const dot = document.createElement('div');
   dot.className = 'cursor-dot';
   document.body.appendChild(dot);

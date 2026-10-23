@@ -666,7 +666,7 @@ html[data-skin="muse"] {
 }
 .mono { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; letter-spacing: .06em; }
 .mesh { display: none; }
-html[data-skin="muse"] .mesh { display: block; position: fixed; inset: -20%; z-index: -1; pointer-events: none; transform: translate3d(calc(var(--mx, 0) * -30px), calc(var(--my, 0) * -30px), 0); }
+html[data-skin="muse"] .mesh { display: block; position: fixed; inset: 0; overflow: hidden; contain: strict; z-index: -1; pointer-events: none; transform: translate3d(calc(var(--mx, 0) * -30px), calc(var(--my, 0) * -30px), 0); }
 html[data-skin="muse"] .mesh i { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; opacity: .5; will-change: transform; animation: breathe-mesh 22s ease-in-out infinite alternate; }
 html[data-skin="muse"] .mesh i:nth-child(1) { left: -10%; top: -15%; background: radial-gradient(closest-side, rgba(10, 132, 255, .55), transparent); }
 html[data-skin="muse"] .mesh i:nth-child(2) { right: -15%; top: 20%; background: radial-gradient(closest-side, rgba(94, 92, 230, .45), transparent); animation-duration: 27s; animation-delay: -6s; }
@@ -776,3 +776,7 @@ html[data-skin="muse"] .mini-progress i { background: linear-gradient(90deg, #0a
 .cursor-dot { position: fixed; left: -5px; top: -5px; width: 10px; height: 10px; border-radius: 50%; background: #64d2ff; box-shadow: 0 0 14px 4px rgba(10, 132, 255, .6); pointer-events: none; z-index: 100; mix-blend-mode: screen; }
 html:not([data-skin="muse"]) .cursor-dot { display: none; }
 @media (prefers-reduced-motion: reduce) { .mesh i, .now-card, .now-card::after, .typing, .folio-avatar { animation: none !important; } }
+
+/* nothing may ever widen the page sideways on a phone */
+html, body { overflow-x: hidden; max-width: 100%; }
+@media (hover: none), (pointer: coarse) { .cursor-dot { display: none !important; } }
