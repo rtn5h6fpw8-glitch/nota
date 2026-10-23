@@ -1,13 +1,14 @@
 // The app shell is taken from the network first, so updates show up at once; the saved copy is used only offline.
 // Artwork is cached after the first view.
-const VERSION = 'note-v37';
+const VERSION = 'note-v38';
 const CACHE = 'shell-' + VERSION;
 const IMG = 'nota-img-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest', 'fonts/bowlby-note.woff2', 'fonts/unbounded-cyr.woff2', 'fonts/unbounded-lat.woff2'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    const old = (await caches.keys()).filter((k) => k !== CACHE && k !== IMG);
+    /* only old copies of the app are removed; artwork and the downloaded speech model stay */
+    const old = (await caches.keys()).filter((k) => k.startsWith('shell-') && k !== CACHE);
     await Promise.all(old.map((k) => caches.delete(k)));
     await self.clients.claim();
   })());

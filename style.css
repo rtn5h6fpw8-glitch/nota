@@ -889,3 +889,23 @@ body { background: var(--bg); font-family: var(--font); }
 /* lyrics: big and bold, like Apple Music */
 .lyr-line { font-family: var(--font); font-size: 30px; font-weight: 800; letter-spacing: -.022em; line-height: 1.16; }
 .big-lyric { font-weight: 700; font-size: 17px; }
+
+/* lyrics states and actions (v38) */
+.lyrics .lyr-state small { display: block; margin-top: 8px; font-size: 14px; font-weight: 500; opacity: .75; line-height: 1.4; }
+.lyr-act { display: inline-flex; align-items: center; justify-content: center; margin-top: 16px; height: 44px; padding: 0 20px; border-radius: 22px; background: #fff; color: #000; font-size: 15px; font-weight: 700; box-shadow: 0 8px 20px rgba(0, 0, 0, .25); }
+.lyr-note .lyr-act { margin-top: 12px; height: 38px; font-size: 14px; }
+.lyr-note { display: flex; flex-direction: column; align-items: flex-start; }
+
+/* smoother movement (v38) */
+#view.enter-fwd { animation: viewFwd .38s cubic-bezier(.2, .85, .25, 1); }
+#view.enter-back { animation: viewBack .38s cubic-bezier(.2, .85, .25, 1); }
+@keyframes viewFwd { from { opacity: 0; transform: translate3d(28px, 0, 0); } }
+@keyframes viewBack { from { opacity: 0; transform: translate3d(-28px, 0, 0); } }
+/* the bottom sheet glides down and the dim fades when it closes */
+.sheet-wrap.closing { animation: fadeOut .23s ease forwards; }
+.sheet-wrap.closing .sheet { animation: sheetOut .23s cubic-bezier(.4, 0, .9, .5) forwards; }
+@keyframes fadeOut { to { background: rgba(0, 0, 0, 0); } }
+@keyframes sheetOut { to { transform: translate3d(0, 100%, 0); } }
+/* the thin progress line under the mini player moves continuously between the player's updates */
+.mini-progress i { transition: transform .26s linear; }
+@media (prefers-reduced-motion: reduce) { #view.enter-fwd, #view.enter-back { animation: none; } }

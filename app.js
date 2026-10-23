@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '37 · 23.10.2026';
+const APP_VERSION = '38 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -167,7 +167,7 @@ const lib = {
   stations: store.get('stations', []),
   artists: store.get('artists', []),
   searches: store.get('searches', []),
-  settings: { jamendo: '', quality: 'high', glass: true, motion: true, sub: true, karaoke: true, fullOnly: false, ...store.get('settings', {}) },
+  settings: { jamendo: '', quality: 'high', glass: true, motion: true, sub: true, karaoke: true, fullOnly: false, voice: false, ...store.get('settings', {}) },
   hidden: (() => {
     const h = store.get('hidden', null) || { albums: [], tracks: [], artists: [] };
     /* album the owner asked to remove (cover not suitable for the app) */
@@ -965,8 +965,151 @@ function fetchLyrics(t) {
   function pack(d) { return { synced: d.syncedLyrics ? parseLrc(d.syncedLyrics) : null, plain: d.plainLyrics || '', inst: !!d.instrumental }; }
 }
 const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx: -2, forId: '', words: {}, activeEl: null };
+/* ---------- voice: Whisper on the phone finds where a preview sits in the song, or writes down the words itself ---------- */
+const voice = {
+  worker: null, seq: 0, jobs: new Map(), busy: null,
+  MODELS: { align: 'onnx-community/whisper-tiny', text: 'onnx-community/whisper-base' },
+  SIZE: { align: 41, text: 77 },
+  start() {
+    if (this.worker) return this.worker;
+    this.worker = new Worker('voice.js', { type: 'module' });
+    this.worker.onmessage = ({ data: m }) => {
+      const j = this.jobs.get(m.id);
+      if (!j) return;
+      if (m.type === 'load') { j.files[m.file] = [m.loaded, m.total]; const v = Object.values(j.files); j.state({ phase: 'load', pct: Math.round((100 * v.reduce((a, x) => a + x[0], 0)) / v.reduce((a, x) => a + x[1], 0)) }); }
+      else if (m.type === 'run') j.state({ phase: 'run' });
+      else { this.jobs.delete(m.id); m.type === 'done' ? j.ok(m.chunks) : j.fail(new Error(m.message)); }
+    };
+    this.worker.onerror = (e) => { for (const j of this.jobs.values()) j.fail(new Error(e.message || 'worker')); this.jobs.clear(); this.worker = null; };
+    return this.worker;
+  },
+  /* one job at a time; a newer request waits for the older one */
+  run(kind, audio, state) {
+    const go = () => new Promise((ok, fail) => {
+      const id = ++this.seq;
+      this.jobs.set(id, { ok, fail, state, files: {} });
+      this.start().postMessage({ id, model: this.MODELS[kind], audio }, [audio.buffer]);
+    });
+    const p = (this.busy || Promise.resolve()).catch(() => {}).then(go);
+    this.busy = p;
+    return p;
+  },
+};
+/* the song as 16 kHz mono sound, which is what Whisper listens to */
+async function pcmOf(t, maxSec) {
+  let buf;
+  if (t.src === 'local') {
+    const rec = await files.get(t.localKey), base = rec.parent ? await files.get(rec.parent) : rec;
+    buf = await base.blob.arrayBuffer();
+  } else {
+    const url = t.src === 'deezer' ? await deezer.fresh(t) : t.url;
+    buf = await (await fetch(url)).arrayBuffer();
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC();
+  const dec = await new Promise((ok, fail) => ac.decodeAudioData(buf, ok, fail));
+  ac.close && ac.close();
+  const s0 = seg && P.cur && P.cur.id === t.id ? seg.start : 0;
+  const len = Math.min(dec.duration - s0, maxSec || 1e9);
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(len * 16000)), 16000);
+  const src = off.createBufferSource(); src.buffer = dec; src.connect(off.destination); src.start(0, s0, len);
+  return (await off.startRendering()).getChannelData(0).slice();
+}
+const words = (x) => norm2(x).split(' ').filter((w) => w.length > 1);
+const norm2 = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}']+/gu, ' ').replace(/'/g, '').trim();
+/* where the 30-second preview starts inside the full song: recognised phrases are matched to the lyric lines,
+   and the shift most of them agree on wins */
+function previewShift(chunks, lines) {
+  const cand = [];
+  const L = lines.map((l) => new Set(words(l.text)));
+  for (const c of chunks) {
+    const cw = words(c.text);
+    if (cw.length < 2) continue;
+    L.forEach((set, i) => {
+      if (!set.size) return;
+      const hit = cw.filter((w) => set.has(w)).length / Math.max(3, Math.min(cw.length, set.size));
+      if (hit >= 0.5) cand.push({ o: lines[i].t - c.s, w: hit });
+    });
+  }
+  let best = null, bw = 0;
+  for (const a of cand) { const w = cand.reduce((n, b) => n + (Math.abs(a.o - b.o) <= 1.5 ? b.w : 0), 0); if (w > bw) { bw = w; best = a.o; } }
+  return bw >= 1.2 && best > -3 ? Math.round(best * 10) / 10 : null;
+}
+/* recognised phrases become lyric lines; typical "phantom" phrases Whisper invents over music are dropped */
+const PHANTOM = /(subtitles|subscribe|thank(s)? (you )?for watching|amara\.org|продолжение следует|субтитр|редактор|спасибо за просмотр|♪|^\W*$)/i;
+function linesFromChunks(chunks) {
+  const out = [];
+  for (const c of chunks) {
+    const text = String(c.text || '').replace(/\s+/g, ' ').trim();
+    if (!text || PHANTOM.test(text) || c.s == null) continue;
+    if (out.length > 1 && out[out.length - 1].text === text && out[out.length - 2].text === text) continue;
+    out.push({ t: c.s, text });
+  }
+  return out;
+}
+function voiceState(st) { lyr.voice = st; if (lyr.open) drawLyrics(); }
+/* previews with synced lyrics: find the shift automatically (when the owner allowed speech recognition) */
+const aligning = new Map();
+function alignPreview(t, d) {
+  const memo = store.get('pvShift', {});
+  if (memo[t.id] != null) return Promise.resolve(memo[t.id]);
+  if (!aligning.has(t.id)) aligning.set(t.id, alignNow(t, d).finally(() => aligning.delete(t.id)));
+  return aligning.get(t.id);
+}
+async function alignNow(t, d) {
+  const memo = store.get('pvShift', {});
+  const id = t.id;
+  const st = (x) => { if (lyr.forId === id) voiceState(x); };
+  st({ phase: 'prep' });
+  const chunks = await voice.run('align', await pcmOf(t, 31), st);
+  const o = previewShift(chunks, d.synced);
+  memo[id] = o == null ? 'none' : o;
+  store.set('pvShift', memo);
+  return memo[id];
+}
+async function transcribe(t) {
+  const id = t.id;
+  const st = (x) => { if (lyr.forId === id) voiceState(x); };
+  st({ phase: 'prep' });
+  const lines = linesFromChunks(await voice.run('text', await pcmOf(t, 420), st));
+  try { localStorage.setItem('nota:asr:' + id, JSON.stringify(lines)); } catch {}
+  return lines;
+}
+const asrOf = (id) => { try { return JSON.parse(localStorage.getItem('nota:asr:' + id)); } catch { return null; } };
+function useLines(lines, shift, auto) {
+  lyr.lines = lines && lines.length ? lines : null; lyr.shift = shift || 0; lyr.auto = !!auto; lyr.words = {}; lyr.idx = -2; lyr.voice = null;
+  $('#player').classList.toggle('has-sub', !!lyr.lines);
+  $('#lyricsBtn').classList.toggle('none', false);
+  if (lyr.open) drawLyrics();
+  syncLyrics(true);
+}
+/* the next previews in the queue are listened to in advance, so their text is ready the moment they start */
+function alignAhead() {
+  if (!lib.settings.voice) return;
+  const next = P.queue.slice(P.idx + 1, P.idx + 3).filter((n) => n.preview && store.get('pvShift', {})[n.id] == null);
+  for (const n of next) {
+    whenReady(fetchLyrics(n), (d) => {
+      if (!d.synced) return;
+      alignPreview(n, d).then((o) => { if (lyr.forId === n.id && typeof o === 'number' && !lyr.lines && lyr.data && lyr.data.synced) useLines(lyr.data.synced, o); }, () => {});
+    }, () => {});
+  }
+}
+function runAlign(t, d) {
+  alignPreview(t, d).then((o) => {
+    if (lyr.forId !== t.id) return;
+    if (o === 'none') { voiceState({ phase: 'miss' }); return; }
+    useLines(d.synced, o);
+  }, () => { if (lyr.forId === t.id) voiceState({ phase: 'err' }); });
+}
+function runTranscribe(t) {
+  transcribe(t).then((lines) => {
+    if (lyr.forId !== t.id) return;
+    if (!lines.length) { voiceState({ phase: 'empty' }); return; }
+    useLines(lines, 0, true);
+  }, () => { if (lyr.forId === t.id) voiceState({ phase: 'err' }); });
+}
 function loadLyrics(t) {
-  lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : ''; lyr.words = {}; lyr.activeEl = null;
+  lyr.data = null; lyr.lines = null; lyr.idx = -2; lyr.forId = t ? t.id : ''; lyr.words = {}; lyr.activeEl = null; lyr.shift = 0; lyr.auto = false; lyr.voice = null;
   $('#player').classList.remove('has-sub');
   $('#lyricsBtn').classList.toggle('none', !t || !!t.live);
   showMiniLyric('');
@@ -976,11 +1119,17 @@ function loadLyrics(t) {
     if (!P.cur || P.cur.id !== lyr.forId) return;
     lyr.data = d;
     lyr.lines = d.synced && d.synced.length && !t.preview ? d.synced : null;
-    $('#lyricsBtn').classList.toggle('none', !!d.none);
+    /* a preview whose place in the song is already known, or words recognised earlier */
+    const known = store.get('pvShift', {})[t.id];
+    if (!lyr.lines && t.preview && d.synced && typeof known === 'number') { useLines(d.synced, known); alignAhead(); return; }
+    if (!lyr.lines && !d.inst && (!d.synced || !t.preview) && asrOf(t.id)) { useLines(asrOf(t.id), 0, true); return; }
+    $('#lyricsBtn').classList.toggle('none', false);
     $('#player').classList.toggle('has-sub', !!lyr.lines);
     if (lyr.open) drawLyrics();
     syncLyrics(true);
-  }, () => { if (lyr.open) drawLyrics(); });
+    if (!lyr.lines && t.preview && d.synced && known == null && lib.settings.voice) runAlign(t, d);
+    alignAhead();
+  }, () => { if (P.cur && P.cur.id === lyr.forId) { lyr.data = { err: true }; if (lyr.open) drawLyrics(); } });
 }
 function lineWords(i) {
   const lines = lyr.lines, line = lines[i];
@@ -1027,16 +1176,31 @@ function drawLyrics() {
   if (!t) return;
   if (t.live) { inner.innerHTML = '<p class="lyr-state">У радиоэфира нет текста песни</p>'; return; }
   if (!d) { inner.innerHTML = '<p class="lyr-state"><span class="spin"></span>Ищу текст песни…</p>'; return; }
+  if (d.err) { inner.innerHTML = '<p class="lyr-state">Не получилось связаться с базой текстов.<br><small>Проверьте интернет. Если включён VPN или блокировщик, попробуйте без него.</small><button class="lyr-act" data-lyr="retry">Попробовать снова</button></p>'; return; }
+  const v = lyr.voice;
+  if (v && !lyr.lines) {
+    const msg = { prep: 'Готовлю звук…', load: `Скачиваю модель распознавания… ${v.pct || 0}%<small>Это один раз, дальше она хранится на телефоне.</small>`, run: (t.preview ? 'Слушаю превью и ищу это место в тексте…' : 'Распознаю слова по голосу…') + '<small>Можно слушать дальше, это идёт в фоне.</small>' }[v.phase];
+    if (msg) { inner.innerHTML = `<p class="lyr-state"><span class="spin"></span>${msg}</p>`; return; }
+    if (v.phase === 'err') { inner.innerHTML = '<p class="lyr-state">Распознать не получилось.<small>Возможно, не хватило памяти или интернета.</small><button class="lyr-act" data-lyr="' + (t.preview && d.synced ? 'align' : 'asr') + '">Ещё раз</button></p>'; return; }
+    if (v.phase === 'empty') { inner.innerHTML = '<p class="lyr-state">В этой песне не удалось разобрать слов.<small>Похоже, она без вокала или голос сильно спрятан в музыке.</small></p>'; return; }
+  }
   if (d.inst) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
-  if (d.none || (!d.synced && !d.plain)) { inner.innerHTML = `<p class="lyr-state">Текста этой песни нет в базе текстов.<br><br>Тексты есть у большинства известных песен. У независимых артистов и электронной музыки их обычно нет.</p>`; return; }
+  if (d.none || (!d.synced && !d.plain)) {
+    inner.innerHTML = `<p class="lyr-state">Текста этой песни нет в базе текстов.<small>Note может распознать слова по голосу прямо на телефоне и сделать из них субтитры. Модель ${voice.SIZE.text} МБ скачается один раз. Возможны ошибки.</small><button class="lyr-act" data-lyr="asr">Распознать слова</button></p>`;
+    return;
+  }
   if (lyr.lines) {
     inner.innerHTML = lyr.lines.map((l, i) => `<button class="lyr-line${l.text ? '' : ' gap'}" data-lt="${l.t}">${l.text ? wordSpans(lineWords(i)) : '<span class="dots"><i></i><i></i><i></i></span>'}</button>`).join('') +
-      `<div class="lyr-src">Текст: LRCLIB<div class="lyr-off"><button data-off="-0.5">Текст спешит</button><b id="offVal"></b><button data-off="0.5">Текст отстаёт</button></div></div>`;
+      `<div class="lyr-src">${lyr.auto ? 'Текст распознан по голосу на телефоне, возможны ошибки' : lyr.shift ? 'Текст: LRCLIB · место превью найдено по голосу' : 'Текст: LRCLIB'}<div class="lyr-off"><button data-off="-0.5">Текст спешит</button><b id="offVal"></b><button data-off="0.5">Текст отстаёт</button></div></div>`;
     showOffset();
   } else {
     box.classList.add('plain');
     const text = d.plain || (d.synced || []).map((l) => l.text).join('\n');
-    inner.innerHTML = (t.preview ? '<p class="lyr-note">Это превью 30 секунд, поэтому текст идёт без подсветки. Синхронно подсвечиваются песни, которые играют целиком.</p>' : '') + text.split('\n').map((x) => `<p class="lyr-line">${esc(x) || '&nbsp;'}</p>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
+    const pv = t.preview && d.synced ? (store.get('pvShift', {})[t.id] === 'none'
+      ? '<p class="lyr-note">Не удалось понять, какой кусок песни в этом превью, поэтому текст без подсветки.</p>'
+      : `<p class="lyr-note">Это превью 30 секунд из середины песни. Note может послушать его и найти это место в тексте — тогда слова будут подсвечиваться. Модель ${voice.SIZE.align} МБ скачается один раз.<button class="lyr-act" data-lyr="align">Подсвечивать текст в превью</button></p>`)
+      : t.preview ? '<p class="lyr-note">Это превью 30 секунд, а у текста в базе нет разметки по времени, поэтому он без подсветки.</p>' : '';
+    inner.innerHTML = pv + text.split('\n').map((x) => `<p class="lyr-line">${esc(x) || '&nbsp;'}</p>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
   }
   lyr.idx = -2;
   syncLyrics(true);
@@ -1056,7 +1220,7 @@ function showMiniLyric(text, i) {
 function syncLyrics(force) {
   const lines = lyr.lines;
   if (!lines || !P.cur) return;
-  const now = (pendingSeek != null ? pendingSeek : audio.currentTime - segStart()) + lyrOffset();
+  const now = (pendingSeek != null ? pendingSeek : audio.currentTime - segStart()) + lyrOffset() + (lyr.shift || 0);
   const c = now + 0.3;
   let i = -1;
   for (let k = 0; k < lines.length && lines[k].t <= c; k++) i = k;
@@ -1102,6 +1266,13 @@ $('#lyricsBtn').onclick = () => setLyricsOpen(!lyr.open);
 $('#queueBtn').onclick = () => { if (lyr.open) setLyricsOpen(false); const q = $('.queue-wrap'); $('#player').scrollTo({ top: q.offsetTop - 12, behavior: 'smooth' }); };
 $('#sleepBtn').onclick = () => openSheet('<h3>Таймер сна<small>' + sleep.label() + '</small></h3>', acts([['15', 'Через 15 минут'], ['30', 'Через 30 минут'], ['60', 'Через час'], ['end', 'Когда закончится трек'], ['0', 'Выключить']].map(([v, label]) => ({ label, fn: () => { sleep.set(v); $('#sleepBtn').classList.toggle('on', v !== '0'); } }))));
 $('#lyrInner').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-lyr]');
+  if (act && P.cur) {
+    const t = P.cur, d = lyr.data, k = act.dataset.lyr;
+    if (k === 'retry') { loadLyrics(t); return; }
+    if (k === 'align') { lib.settings.voice = true; lib.save('settings'); const m = store.get('pvShift', {}); delete m[t.id]; store.set('pvShift', m); runAlign(t, d); return; }
+    if (k === 'asr') { runTranscribe(t); return; }
+  }
   const o = e.target.closest('[data-off]');
   if (o && P.cur) {
     const m = store.get('lyrOff', {}), v = Math.round(((m[P.cur.id] || 0) - +o.dataset.off) * 10) / 10;
@@ -1446,12 +1617,20 @@ document.addEventListener('keydown', (e) => {
 /* ======================= sheets ======================= */
 let sheetActs = [];
 function openSheet(head, body) {
+  clearTimeout(sheetTimer); $('#sheet').classList.remove('closing');
   $('#sheetHead').innerHTML = head;
   $('#sheetBody').innerHTML = body;
   $('#sheet').hidden = false;
   const f = $('#sheetBody input'); if (f) setTimeout(() => f.focus(), 60);
 }
-function closeSheet() { $('#sheet').hidden = true; $('#sheetBody').innerHTML = ''; }
+/* the sheet slides away instead of vanishing */
+let sheetTimer = 0;
+function closeSheet() {
+  const w = $('#sheet');
+  if (w.hidden || w.classList.contains('closing')) return;
+  w.classList.add('closing');
+  sheetTimer = setTimeout(() => { w.hidden = true; w.classList.remove('closing'); $('#sheetBody').innerHTML = ''; }, document.documentElement.classList.contains('no-motion') ? 0 : 230);
+}
 $('#sheetCancel').onclick = closeSheet;
 $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
 function acts(list) {
@@ -2074,6 +2253,7 @@ const views = {
       <div class="group">
         ${sw('sub', 'Строка текста под названием', 'В плеере и мини-плеере видна строка, которая сейчас поётся.')}
         ${sw('karaoke', 'Подсветка по словам', 'Слова заполняются по мере пения, как караоке. Если выключить, подсвечивается вся строка.')}
+        ${sw('voice', 'Подсветка текста в превью', 'Note слушает 30-секундное превью прямо на телефоне и находит это место в тексте. Модель 41 МБ скачивается один раз.')}
       </div>
       <h2 class="set-h">Источники</h2>
       <div class="group src">
@@ -2316,6 +2496,18 @@ function watchTitle() {
 document.addEventListener('touchstart', () => {}, { passive: true });
 
 /* ======================= router ======================= */
+const navStack = [];
+function navDir(h, root) {
+  if (root) { const back = navStack.length > 1 && navStack[0] === h; navStack.length = 0; navStack.push(h); return back ? 'enter-back' : 'enter'; }
+  if (navStack.length > 1 && navStack[navStack.length - 2] === h) { navStack.pop(); return 'enter-back'; }
+  if (navStack[navStack.length - 1] !== h) navStack.push(h);
+  return 'enter-fwd';
+}
+/* tapping the tab you are already on glides back to the top, as on iPhone */
+$('.tabs').addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-tab]');
+  if (a && (location.hash || '#home') === a.getAttribute('href') && window.scrollY > 0) { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+});
 function route() {
   const h = location.hash.slice(1) || 'home';
   const [name, ...rest] = h.split('/');
@@ -2333,8 +2525,9 @@ function route() {
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
   fn(arg);
   window.scrollTo(0, 0);
-  /* the new screen settles in softly */
-  view.classList.remove('enter'); void view.offsetWidth; view.classList.add('enter');
+  /* the new screen comes in from the right when going deeper, from the left when going back, and softly between tabs */
+  const dir = navDir(location.hash || '#home', ['home', 'browse', 'radio', 'library', 'search'].includes(name));
+  view.classList.remove('enter', 'enter-fwd', 'enter-back'); void view.offsetWidth; view.classList.add(dir);
   paintTints();
   watchTitle();
   markPlaying();
