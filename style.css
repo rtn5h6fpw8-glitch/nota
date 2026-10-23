@@ -664,3 +664,56 @@ html[data-skin="classic"] .row:has(.hit:active) { background: rgba(0, 0, 0, .05)
 .card .art, .feature .art, .tile, .top-hit, .hero-card { transition: transform .18s cubic-bezier(.2, .8, .2, 1); }
 /* long one-word titles wrap inside the album-of-the-week card instead of running off it */
 .hc-text b { overflow-wrap: anywhere; font-size: 18px; }
+
+/* =================== Liquid Glass (v34) =================== */
+/* see-through glass for the floating bars: blur and boosted colour of what scrolls under them,
+   a bright rim on top, a soft sheen, and a glass "drop" that slides to the chosen tab */
+:root { --lg-fill: rgba(30, 30, 36, .6); --lg-rim: rgba(255, 255, 255, .26); --lg-rim-low: rgba(255, 255, 255, .07); --lg-drop: rgba(255, 255, 255, .15); }
+html[data-skin="aurora"] { --lg-fill: rgba(40, 26, 74, .6); --lg-drop: rgba(192, 132, 252, .3); }
+html[data-skin="classic"] { --lg-fill: rgba(255, 255, 255, .7); --lg-rim: rgba(255, 255, 255, .9); --lg-rim-low: rgba(0, 0, 0, .06); --lg-drop: rgba(240, 56, 74, .12); }
+.lg-glass, .toast, .sheet {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, 0) 60%), var(--lg-fill) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(185%) !important; backdrop-filter: blur(20px) saturate(185%) !important;
+  box-shadow: inset 0 1px 0 var(--lg-rim), inset 0 -1px 0 var(--lg-rim-low), inset 0 0 0 .5px rgba(255, 255, 255, .12), 0 14px 34px rgba(0, 0, 0, .38) !important;
+}
+html[data-skin="classic"] .toast { color: #101012; }
+.sheet { background: linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, 0) 40%), rgba(22, 22, 26, .72) !important; }
+html[data-skin="classic"] .sheet { background: rgba(255, 255, 255, .8) !important; }
+.sheet-wrap { background: rgba(0, 0, 0, .28); }
+@media (max-width: 899px) {
+  .tabs.lg-glass { border: 0; }
+  .tabs.lg-glass a::before { display: none; }
+  .tab-drop {
+    position: absolute; top: 6px; bottom: 6px; left: 6px; width: calc((100% - 12px) / 5); border-radius: 26px; pointer-events: none;
+    background: var(--lg-drop); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 0 0 .5px rgba(255, 255, 255, .14);
+    transform: translateX(calc(var(--ti, 0) * 100%)); transition: transform .5s cubic-bezier(.3, 1.35, .5, 1), opacity .25s;
+  }
+  .tabs.no-tab .tab-drop { opacity: 0; }
+  .tabs a { z-index: 1; }
+  .mini.lg-glass { border-radius: 24px; }
+  .mini.lg-glass .mini-art { box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+}
+@media (min-width: 900px) { .tab-drop { display: none; } .tabs.lg-glass { background: var(--surface) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; box-shadow: none !important; } .mini.lg-glass { border-radius: 18px; } }
+/* glass buttons in the player */
+.now-btn { background: rgba(255, 255, 255, .16); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 0 0 .5px rgba(255, 255, 255, .14); }
+.now-btn.on { background: #fff; }
+
+/* every tap answers: things sink a little under the finger and spring back when let go */
+:where(button, a, [role="button"], .skin, .seg button) { transition: transform .45s cubic-bezier(.3, 1.5, .5, 1), opacity .2s ease; }
+:where(button, a, [role="button"]):active { transform: scale(.95); transition-duration: .1s; }
+.tabs a:active svg { transform: scale(.82); }
+/* wide rows and menus sink less; cards already shrink their cover */
+.row .hit:active, .menu a:active, .menu button:active, .sheet button:active, .queue button:active { transform: scale(.985); }
+.card:active, .feature:active, .tabs a:active { transform: none; }
+.tabs a svg { transition: transform .45s cubic-bezier(.3, 1.6, .5, 1); }
+.tabs a.on svg { animation: tabPop .5s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes tabPop { 40% { transform: scale(1.18); } }
+.ctl { transition: transform .45s cubic-bezier(.3, 1.6, .5, 1), opacity .2s; }
+.ctl:active { transform: scale(.84); opacity: .75; transition-duration: .1s; }
+.ctl.huge:active { transform: scale(.8); }
+.seg button.on { transition: background-color .25s ease, color .25s ease, transform .45s cubic-bezier(.3, 1.5, .5, 1); }
+.lyr-line:active { opacity: .7; }
+@media (prefers-reduced-motion: reduce) { :where(button, a, [role="button"]):active { transform: none; } .tab-drop { transition: none; } }
+
+/* karaoke: the word being sung lifts a touch, like in Apple Music */
+.lyr-line.on .w { display: inline-block; transform: translateY(calc(var(--p) * -2px)); }

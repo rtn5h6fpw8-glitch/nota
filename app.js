@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '33 · 23.10.2026';
+const APP_VERSION = '34 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -886,31 +886,69 @@ function parseLrc(text) {
   }
   return out.sort((a, b) => a.t - b.t);
 }
-const cleanTitle = (x) => String(x).replace(/\s*[([](feat|ft|with|prod|prod\.)[^)\]]*[)\]]/gi, '').replace(/\s+-\s+.*(remaster|edit|version|mix).*$/i, '').replace(/\s*\[[^\]]*\]\s*$/, '').trim();
-const firstArtist = (x) => String(x || '').split(/,|\s(?:feat\.?|ft\.?|&|x|and)\s/i)[0].trim();
+/* names as they appear in files and video uploads carry noise the lyrics database does not have */
+const JUNK = /\b(feat|ft|with|prod|official|video|audio|lyrics?|lyric video|visualizer|explicit|clean|remaster(ed)?|hd|hq|4k|mv|clip|премьера|клип|текст)\b/i;
+const cleanTitle = (x) => String(x || '')
+  .replace(/\.(mp3|flac|m4a|ogg|opus|wav)$/i, '').replace(/_/g, ' ')
+  .replace(/^\s*\d{1,3}\s*[.\-)]\s*/, '')
+  .replace(/\s*[([{][^)\]}]*[)\]}]/g, (m) => (JUNK.test(m) ? '' : m))
+  .replace(/\s+(feat|ft|prod)\.?\s.*$/i, '')
+  .replace(/\s+-\s+[^-]*\b(remaster(ed)?|radio edit|version|live)\b[^-]*$/i, '')
+  .replace(/["«»“”]/g, '').replace(/\s+/g, ' ').trim();
+const bare = (x) => cleanTitle(x).replace(/\s*[([{][^)\]}]*[)\]}]/g, '').trim();
+const firstArtist = (x) => String(x || '').replace(/\s*-\s*topic$|vevo$/i, '').split(/,|;|\/|\s(?:feat\.?|ft\.?|&|x|и|and)\s/i)[0].trim();
 function fetchLyrics(t) {
-  return cached('lyr4:' + t.id, async () => {
-    /* candidates: the track's own artist/title, and "Artist - Title" written inside the title */
-    const cands = [{ a: firstArtist(t.artist), t: cleanTitle(t.title) }];
-    const m = String(t.title).match(/^(.+?)\s[-–]\s(.+)$/);
-    if (m) cands.unshift({ a: firstArtist(m[1]), t: cleanTitle(m[2]) });
-    const dur = t.preview ? 0 : t.duration || 0;
-    const good = (d) => d && (d.syncedLyrics || d.plainLyrics);
+  return cached('lyr5:' + t.id, async () => {
+    /* candidates: the track's own artist/title, and "Artist - Title" written inside the title or file name */
+    const cands = [];
+    const add = (a, ti) => { a = firstArtist(a); for (const x of [cleanTitle(ti), bare(ti)]) if (x && !cands.some((c) => c.a === a && c.t === x)) cands.push({ a, t: x }); };
+    const raw = String(t.title || '').replace(/^\s*\d{1,3}\s*[.\-)]\s*/, '');
+    const m = raw.match(/^(.+?)\s[-–—]\s(.+)$/);
+    if (m) add(m[1], m[2]);
+    add(t.artist, raw);
+    const dur = t.preview ? 0 : Math.round(t.duration || 0);
+    const good = (d) => d && (d.syncedLyrics || d.plainLyrics || d.instrumental);
     /* a real "not found" is remembered; a busy or unreachable server is not, so the next play tries again */
     const notFound = (e) => { if (/HTTP 404/.test(String(e && e.message))) return null; throw e; };
-    for (const c of cands) {
+    /* when the server says "too many requests" or "busy", wait a moment and try once more */
+    const ask = (q) => getJSONOnce('https://lrclib.net/api/' + q, 9000).catch((e) => (/HTTP (429|50[23])/.test(String(e && e.message)) ? new Promise((ok) => setTimeout(ok, 1500)).then(() => getJSONOnce('https://lrclib.net/api/' + q, 9000)) : Promise.reject(e))).catch(notFound);
+    /* how well a database entry fits: the title must match, plus the artist or the length */
+    const score = (x, c) => {
+      const tn = norm(c.t), xt = norm(x.trackName), an = norm(c.a), xa = norm(x.artistName);
+      const ti = xt === tn ? 3 : tn.length > 2 && (xt.includes(tn) || tn.includes(xt)) ? 2 : 0;
+      if (!ti) return 0;
+      const ar = an && xa && (xa.includes(an) || an.includes(xa)) ? 2 : 0;
+      const near = dur && x.duration ? Math.abs(x.duration - dur) : 99;
+      if (!ar && near > 3) return 0;
+      if (dur && near > 15) return 0;
+      return ti + ar + (near <= 3 ? 2 : 0) + (x.syncedLyrics ? 1.5 : 0);
+    };
+    let plainHit = null;
+    const pick = (l, c) => { let best = null, bs = 0; for (const x of l || []) { if (!good(x)) continue; const v = score(x, c); if (v > bs) { bs = v; best = x; } } return best; };
+    for (const c of cands.slice(0, 2)) {
       if (!c.a || !c.t) continue;
-      const d = await getJSONOnce('https://lrclib.net/api/get?' + new URLSearchParams({ artist_name: c.a, track_name: c.t }), 9000).catch(notFound);
-      if (good(d)) return pack(d);
+      const d = await ask('get?' + new URLSearchParams(dur ? { artist_name: c.a, track_name: c.t, duration: dur } : { artist_name: c.a, track_name: c.t }));
+      if (good(d) && (d.syncedLyrics || !dur)) return pack(d);
+      if (good(d)) plainHit = plainHit || d;
     }
     for (const c of cands) {
-      const l = (await getJSONOnce('https://lrclib.net/api/search?' + new URLSearchParams({ q: `${c.a} ${c.t}`.trim() }), 9000).catch(notFound)) || [];
-      const an = norm(c.a), tn = norm(c.t);
-      const hits = (l || []).filter((x) => good(x) && norm(x.trackName).includes(tn) && (!an || norm(x.artistName).includes(an) || an.includes(norm(x.artistName))));
-      const best = hits.find((x) => x.syncedLyrics && (!dur || Math.abs(x.duration - dur) < 4)) || hits.find((x) => x.syncedLyrics) || hits[0];
-      if (best) return pack(best);
+      if (!c.t) continue;
+      const l = await ask('search?' + new URLSearchParams(c.a ? { track_name: c.t, artist_name: c.a } : { track_name: c.t }));
+      const best = pick(l, c);
+      if (best && best.syncedLyrics) return pack(best);
+      if (best) plainHit = plainHit || best;
     }
-    return { none: true };
+    /* last tries: free-text search, and the title alone matched by song length */
+    const c0 = cands[0];
+    if (c0) {
+      for (const q of [`${c0.a} ${c0.t}`.trim(), dur ? c0.t : '']) {
+        if (!q) continue;
+        const best = pick(await ask('search?' + new URLSearchParams({ q })), c0);
+        if (best && best.syncedLyrics) return pack(best);
+        if (best) plainHit = plainHit || best;
+      }
+    }
+    return plainHit ? pack(plainHit) : { none: true };
   }, 30 * 24 * 3600e3);
   function pack(d) { return { synced: d.syncedLyrics ? parseLrc(d.syncedLyrics) : null, plain: d.plainLyrics || '', inst: !!d.instrumental }; }
 }
@@ -2071,6 +2109,9 @@ function watchTitle() {
   if (!attach()) setTimeout(attach, 600);
 }
 
+/* iOS shows the pressed state (:active) only when the page listens for touches */
+document.addEventListener('touchstart', () => {}, { passive: true });
+
 /* ======================= router ======================= */
 function route() {
   const h = location.hash.slice(1) || 'home';
@@ -2079,7 +2120,13 @@ function route() {
   const fn = views[name] || views.home;
   const tab = { dz: null, dza: null, rappers: 'browse', chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
   const active = tab === undefined ? (views[name] ? name : 'home') : tab;
-  if (active !== null) $$('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === active));
+  if (active !== null) {
+    const tabs = $$('.tabs a[data-tab]'), ti = tabs.findIndex((a) => a.dataset.tab === active);
+    tabs.forEach((a) => a.classList.toggle('on', a.dataset.tab === active));
+    /* the glass drop slides to the chosen tab */
+    $('.tabs').style.setProperty('--ti', Math.max(0, ti));
+    $('.tabs').classList.toggle('no-tab', ti < 0);
+  }
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
   fn(arg);
   window.scrollTo(0, 0);
