@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '25 · 23.10.2026';
+const APP_VERSION = '26 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -73,8 +73,9 @@ const disk = {
 const ready = (d) => { const p = Promise.resolve(d); p.v = d; return p; };
 function cached(key, fn, fresh = CACHE_FRESH) {
   if (memo.has(key)) return memo.get(key);
-  const hit = disk.get(key);
-  const load = () => fn().then((d) => { disk.set(key, d); return d; });
+  const keep = !key.startsWith('s-');
+  const hit = keep ? disk.get(key) : null;
+  const load = () => fn().then((d) => { if (keep) disk.set(key, d); return d; });
   let p;
   if (hit) {
     p = ready(hit.d);
@@ -90,10 +91,15 @@ function mapP(p, fn) { if (p.v !== undefined) return ready(fn(p.v)); const q = p
 function allP(list) { return list.every((p) => p.v !== undefined) ? ready(list.map((p) => p.v)) : Promise.all(list); }
 function whenReady(p, ok, fail) { if (p.v !== undefined) ok(p.v); else p.then(ok, fail); }
 
+/* Motion (vendor/motion.js) gives the big moves real spring physics; without it CSS takes over */
+const motion = () => (window.Motion && !matchMedia('(prefers-reduced-motion: reduce)').matches ? window.Motion : null);
+const SPRING = { type: 'spring', stiffness: 330, damping: 34, mass: 1 };
 let toastTimer;
 function toast(msg) {
   const el = $('#toast');
   el.textContent = msg; el.hidden = false;
+  const m = motion();
+  if (m) { el.style.animation = 'none'; m.animate(el, { x: ['-50%', '-50%'], y: [14, 0], scale: [0.94, 1], opacity: [0, 1] }, { type: 'spring', stiffness: 420, damping: 30 }); }
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, 2400);
 }
@@ -146,7 +152,7 @@ window.noteImgErr = (el) => {
 const ph = `<div class="ph">${I.note}</div>`;
 const phPerson = `<div class="ph">${I.person}</div>`;
 /* big: a sharper copy the browser picks on high-density screens */
-function img(src, person, big, sizes = '(min-width: 600px) 180px, 46vw') {
+function img(src, person, big, sizes = '(min-width: 600px) 180px, 38vw') {
   if (!src) return person ? phPerson : ph;
   const set = big && big !== src ? ` srcset="${esc(src)} 480w, ${esc(big)} 1000w" sizes="${sizes}"` : '';
   return (person ? phPerson : ph) + `<img src="${esc(src)}"${set} alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onload="this.classList.add('in')" onerror="noteImgErr(this)">`;
@@ -807,14 +813,16 @@ audio.addEventListener('seeked', () => { pendingSeek = null; renderTime(); syncP
 audio.addEventListener('ratechange', syncPosition);
 /* the progress bar moves every frame while music plays, not four times a second */
 let rafId = 0;
+/* the big seek bar moves every frame only while the full player is open;
+   everywhere else four updates a second are enough and keep scrolling smooth */
 function tick() {
   rafId = 0;
-  if (audio.paused) return;
+  if (audio.paused || $('#player').hidden) return;
   if (seg && seg.end && audio.currentTime >= seg.end - 0.12) { P.next(true); return; }
   renderTime();
   rafId = requestAnimationFrame(tick);
 }
-function startTick() { if (!rafId && !document.hidden) rafId = requestAnimationFrame(tick); }
+function startTick() { if (!rafId && !document.hidden && !$('#player').hidden) rafId = requestAnimationFrame(tick); }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderTime(); startTick(); } });
 function setBuffering(on) {
   $('#play').classList.toggle('buffering', on);
@@ -849,7 +857,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) saveP
 /* backup for when frames are paused (screen locked): songs inside one long file still end on time */
 audio.addEventListener('timeupdate', () => {
   if (seg && seg.end && audio.currentTime >= seg.end - 0.15) { P.next(true); return; }
-  if (document.hidden) syncPosition(); else if (!rafId) renderTime();
+  if (document.hidden) syncPosition(); else if (!rafId) { renderTime(); startTick(); }
 });
 audio.addEventListener('durationchange', () => { renderTime(); syncPosition(); });
 audio.addEventListener('error', () => {
@@ -1010,7 +1018,11 @@ function fitTitle() {
 function renderNow() {
   const t = P.cur;
   const mini = $('#mini');
-  if (t && mini.hidden) { mini.classList.remove('show'); void mini.offsetWidth; mini.classList.add('show'); }
+  if (t && mini.hidden) {
+    const m = motion();
+    if (m) requestAnimationFrame(() => m.animate(mini, { y: [40, 0], opacity: [0, 1] }, SPRING));
+    else { mini.classList.remove('show'); void mini.offsetWidth; mini.classList.add('show'); }
+  }
   mini.hidden = !t;
   if (!t) return;
   if (t.id !== shownId) {
@@ -1142,8 +1154,9 @@ $('#clearQueue').onclick = () => { P.queue = P.queue.slice(0, P.idx + 1); P.pers
 /* seek bar: follows the finger instantly, jumps the audio once on release */
 const seekEl = $('#seek');
 const bubble = $('#seekBubble');
+let seekRect = null;
 function seekAt(e) {
-  const r = seekEl.getBoundingClientRect();
+  const r = seekRect || (seekRect = seekEl.getBoundingClientRect());
   seekRatio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   const d = seekDur();
   setSeek(seekRatio);
@@ -1154,6 +1167,7 @@ function seekAt(e) {
   lastSec = lastLeft = -1;
 }
 seekEl.addEventListener('pointerdown', (e) => {
+  seekRect = seekEl.getBoundingClientRect();
   if (seekEl.classList.contains('disabled') || !seekDur()) return;
   e.preventDefault();
   try { seekEl.setPointerCapture(e.pointerId); } catch {}
@@ -1184,7 +1198,11 @@ $('#bigLike').onclick = (e) => {
   if (!t) return;
   t.src === 'radio' ? lib.toggleStation(t) : lib.toggleLike(t);
   b.classList.remove('burst');
-  if (b.classList.contains('on')) { void b.offsetWidth; b.classList.add('burst'); }
+  if (b.classList.contains('on')) {
+    const m = motion();
+    if (m) m.animate(b, { scale: [0.7, 1.28, 1] }, { duration: 0.45, ease: 'easeOut' });
+    else { void b.offsetWidth; b.classList.add('burst'); }
+  }
 };
 $('#bigMore').onclick = () => P.cur && trackSheet(P.cur, {});
 $('#bigArtist').onclick = () => {
@@ -1201,8 +1219,10 @@ function openPlayer() {
   playerEl.style.transition = ''; playerEl.style.transform = '';
   playerEl.hidden = false;
   document.documentElement.style.overflow = 'hidden';
-  renderQueue();
+  const m = motion();
+  if (m) { playerEl.style.animation = 'none'; m.animate(playerEl, { y: [innerHeight, 0] }, SPRING).then(() => { playerEl.style.transform = ''; }); }
   requestAnimationFrame(fitTitle);
+  startTick();
 }
 function hidePlayer() {
   playerEl.hidden = true;
@@ -1212,6 +1232,12 @@ function hidePlayer() {
 function closePlayer(animate = true) {
   if (playerEl.hidden) return;
   if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return hidePlayer();
+  const m = motion();
+  if (m) {
+    const from = +((playerEl.style.transform.match(/translate(?:3d|Y)?\(\s*(?:0px,\s*)?(-?[\d.]+)px/) || [])[1] || 0);
+    m.animate(playerEl, { y: [from, innerHeight] }, { duration: 0.3, ease: [0.25, 0.8, 0.3, 1] }).then(hidePlayer);
+    return;
+  }
   const ease = 'transform .32s cubic-bezier(.25,.8,.3,1)';
   playerEl.style.transition = ease;
   playerEl.style.transform = 'translate3d(0,100%,0)';
@@ -1269,6 +1295,8 @@ playerEl.addEventListener('touchend', () => {
   drag = null;
   const v = dy / Math.max(1, performance.now() - t0);
   if (dy > 140 || (dy > 30 && v > 0.5)) return closePlayer();
+  const m = motion();
+  if (m) { playerEl.style.transition = 'none'; m.animate(playerEl, { y: [dy, 0] }, SPRING).then(() => { playerEl.style.transform = ''; }); return; }
   const back = 'transform .3s cubic-bezier(.25,.8,.3,1)';
   playerEl.style.transition = back; playerEl.style.transform = '';
 });
@@ -1286,6 +1314,8 @@ function openSheet(head, body) {
   $('#sheetHead').innerHTML = head;
   $('#sheetBody').innerHTML = body;
   $('#sheet').hidden = false;
+  const m = motion();
+  if (m) { const sh = $('#sheet .sheet'); sh.style.animation = 'none'; m.animate(sh, { y: [sh.offsetHeight || 400, 0] }, { type: 'spring', stiffness: 380, damping: 36 }); }
   const f = $('#sheetBody input'); if (f) setTimeout(() => f.focus(), 60);
 }
 function closeSheet() { $('#sheet').hidden = true; $('#sheetBody').innerHTML = ''; }
@@ -1472,6 +1502,8 @@ const RAP_SOURCES = [
   ['Hip-Hop/Rap', 'week', 0], ['Hip-Hop/Rap', 'month', 0], ['Hip-Hop/Rap', 'allTime', 0], ['Hip-Hop/Rap', 'allTime', 100], ['Hip-Hop/Rap', 'allTime', 200],
   ['Trap', 'week', 0], ['Trap', 'month', 0], ['Trap', 'allTime', 0], ['Trap', 'allTime', 100],
 ];
+const ruCollator = new Intl.Collator('ru', { sensitivity: 'base' });
+let sortedRappers = null;
 const rapIndex = () => cached('rap-index', async () => {
   const lists = await Promise.all(RAP_SOURCES.map(([genre, time, offset]) => slow(() => audius.trending({ genre, time, limit: 100, offset })).catch(() => [])));
   const all = artistsOf(lists.flat(), 5000);
@@ -1751,7 +1783,7 @@ const views = {
       let drawJob = 0;
       const draw = (q) => {
         drawJob++;
-        const l = q ? matchArtists(list, q) : list.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru', { sensitivity: 'base' }));
+        const l = q ? matchArtists(list, q) : (sortedRappers ||= list.slice().sort((a, b) => ruCollator.compare(a.name, b.name)));
         if (!l.length) { out.innerHTML = '<div class="empty"><b>Не нашлось</b>Попробуйте общий поиск: там больше артистов.</div>'; return; }
         if (q) { out.innerHTML = `<ul class="list">${l.map(folderRow).join('')}</ul>`; return; }
         const groups = new Map();
@@ -1765,7 +1797,7 @@ const views = {
         setTimeout(more, 60);
       };
       draw('');
-      $('#rq').addEventListener('input', (e) => draw(e.target.value.trim()));
+      $('#rq').addEventListener('input', debounce((e) => draw(e.target.value.trim()), 150));
     }, () => { const out = $('#rapList'); if (out) out.innerHTML = `<p class="err">Не удалось загрузить.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
 
