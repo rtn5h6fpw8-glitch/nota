@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '36 · 23.10.2026';
+const APP_VERSION = '37 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1099,6 +1099,8 @@ function setLyricsOpen(on) {
   if (on) drawLyrics();
 }
 $('#lyricsBtn').onclick = () => setLyricsOpen(!lyr.open);
+$('#queueBtn').onclick = () => { if (lyr.open) setLyricsOpen(false); const q = $('.queue-wrap'); $('#player').scrollTo({ top: q.offsetTop - 12, behavior: 'smooth' }); };
+$('#sleepBtn').onclick = () => openSheet('<h3>Таймер сна<small>' + sleep.label() + '</small></h3>', acts([['15', 'Через 15 минут'], ['30', 'Через 30 минут'], ['60', 'Через час'], ['end', 'Когда закончится трек'], ['0', 'Выключить']].map(([v, label]) => ({ label, fn: () => { sleep.set(v); $('#sleepBtn').classList.toggle('on', v !== '0'); } }))));
 $('#lyrInner').addEventListener('click', (e) => {
   const o = e.target.closest('[data-off]');
   if (o && P.cur) {
@@ -1554,6 +1556,45 @@ function heroCard(a) {
     <span class="hc-text"><span class="hc-eyebrow">Альбом недели</span><b>${esc(a.title)}</b><small>${esc(a.artist || '')}</small><span class="hc-play">${I.play}Слушать</span></span>
   </a>`;
 }
+/* big title of a tab with the round profile button, as in Apple Music */
+const head = (t) => `<div class="big-head"><h1 class="page-title">${esc(t)}</h1><a class="avatar" href="#settings" aria-label="Настройки">N</a></div>`;
+/* tall card for "Лучшее для вас": the cover on top, a band in the cover's own colour below */
+function pick(a, eyebrow) {
+  if (lib.isHidden(a)) return '';
+  return `<a class="pick" href="${hrefOf(a)}" data-tint="${esc(a.art || '')}"><span class="pk-art">${img(a.art, false, a.artBig, '(min-width: 600px) 270px, 68vw')}</span><span class="pk-f"><small>${esc(eyebrow)}</small><b>${esc(a.title)}</b><span>${esc(a.artist || '')}</span></span></a>`;
+}
+/* the colour of a cover's lower part, toned down so white text stays readable;
+   covers from servers that do not allow reading pixels get a calm colour picked from their address */
+const tints = new Map();
+function tintOf(src) {
+  if (tints.has(src)) return tints.get(src);
+  const calm = () => { let h = 0; for (const ch of src) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return `hsl(${h % 360} 38% 30%)`; };
+  const p = new Promise((ok) => {
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = () => {
+      try {
+        const c = document.createElement('canvas'); c.width = c.height = 8;
+        const x = c.getContext('2d'); x.drawImage(im, 0, 0, 8, 8);
+        const d = x.getImageData(0, 5, 8, 3).data;
+        let r = 0, g = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+        const n = d.length / 4; r /= n * 255; g /= n * 255; b /= n * 255;
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, dd = mx - mn;
+        let hh = 0;
+        if (dd) hh = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4;
+        const sat = dd ? dd / (1 - Math.abs(2 * l - 1)) : 0;
+        ok(`hsl(${Math.round(((hh * 60) + 360) % 360)} ${Math.round(Math.min(0.62, sat) * 100)}% ${Math.round(Math.min(0.34, Math.max(0.2, l * 0.6)) * 100)}%)`);
+      } catch { ok(calm()); }
+    };
+    im.onerror = () => ok(calm());
+    im.src = src;
+  });
+  tints.set(src, p);
+  return p;
+}
+function paintTints() {
+  $$('[data-tint]:not(.tinted)').forEach((el) => { el.classList.add('tinted'); if (el.dataset.tint) tintOf(el.dataset.tint).then((c) => el.style.setProperty('--tint', c)); });
+}
 function feature(a, eyebrow) {
   if (lib.isHidden(a)) return '';
   return `<a class="feature" href="${hrefOf(a)}"><div><div class="eyebrow">${esc(eyebrow)}</div><div class="ft">${esc(a.title)}</div><div class="fs">${esc(a.artist || '')}</div></div><div class="art">${img(a.art, false, a.artBig, '(min-width: 600px) 380px, 92vw')}</div></a>`;
@@ -1576,7 +1617,7 @@ let lazySeq = 0;
 function lazy(promise, render, skel = skShelf()) {
   if (promise.v !== undefined) return render(promise.v) || '';
   const id = 'z' + ++lazySeq;
-  promise.then((d) => { const el = document.getElementById(id); if (el) { el.outerHTML = render(d) || ''; markPlaying(); } })
+  promise.then((d) => { const el = document.getElementById(id); if (el) { el.outerHTML = render(d) || ''; markPlaying(); paintTints(); } })
     .catch(() => { const el = document.getElementById(id); if (el) el.outerHTML = `<p class="err">Не удалось загрузить.<button class="text-btn" data-retry>Повторить</button></p>`; });
   return `<div id="${id}">${skel}</div>`;
 }
@@ -1666,13 +1707,13 @@ const views = {
   home() {
     const recent = lib.recent.slice(0, 12);
     const rk = reg(recent);
-    const today = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
-    let h = `<p class="page-eyebrow">${esc(today)}</p><h1 class="page-title">Главная</h1>`;
+    let h = head('Главная');
     h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => {
       const list = l.filter((a) => !lib.isHidden(a));
       if (!list.length) return '';
-      return heroCard(list[0]) + (list.length > 1 ? section('Альбомы недели', shelf(list.slice(1, 12).map(card).join(''))) : '');
-    }, `<div class="hero-card sk"></div>`);
+      return section('Лучшее для вас', shelf(list.slice(0, 8).map((a, i) => pick(a, i ? 'Популярно на этой неделе' : 'Альбом недели')).join(''), 'picks')) +
+        (list.length > 8 ? section('Альбомы недели', shelf(list.slice(8, 20).map(card).join(''))) : '');
+    }, shelf('<div class="pick sk"></div><div class="pick sk"></div>', 'picks'));
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
     if (!lib.settings.fullOnly) h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => rowShelf(l.slice(0, 20)), skRows(4)));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
@@ -1685,7 +1726,7 @@ const views = {
   },
 
   browse() {
-    let h = `<h1 class="page-title">Обзор</h1><p class="page-sub">Музыка независимых артистов со всего мира</p>`;
+    let h = head('Обзор');
     h += `<a class="feature" href="#underground" style="margin-top:22px"><div><div class="eyebrow">Подборка</div><div class="ft">Андеграунд-рэп</div><div class="fs">Рейдж, плагг, фонк, дрилл и трэп</div></div><div class="art" data-underground-art>${img('')}</div></a>`;
     h += section('Официальные чарты', lazy(cached('dz-chart:116', () => deezer.chart(116, 40), 6 * 3600e3), (l) => `<p class="note" style="margin:-4px 0 8px">Хип-хоп, мир · превью по 30 секунд</p>` + rowShelf(l.slice(0, 20)), skRows(4)));
     h += section('Рэперы', `<ul class="menu"><li><a href="#rappers">${I.folder}<span>Папки рэперов A–Z</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
@@ -1801,7 +1842,7 @@ const views = {
     const saved = lib.stations;
     const sk = reg(saved);
     const countries = [...new Set([sel.country, ...RADIO_COUNTRIES])].filter((c) => c !== undefined);
-    view.innerHTML = `<h1 class="page-title">Радио</h1>` +
+    view.innerHTML = head('Радио') +
       (saved.length ? section('Мои станции', shelf(saved.map((t, i) => playCard(t, sk, i)).join(''), 'small')) : '') +
       `<section class="section"><div class="sec-head"><h2>Станции</h2><a href="#countries">Все страны${I.chev}</a></div>
       <div class="seg">${['', ...countries].map((c) => `<button class="${sel.country === c ? 'on' : ''}" data-country="${c}">${c ? esc(countryName(c)) : 'Весь мир'}</button>`).join('')}</div>
@@ -1845,7 +1886,7 @@ const views = {
     }
     if (arg === 'files') { location.replace('#mine'); return; }
     const chev = I.chev.replace('<svg', '<svg class="chev"');
-    view.innerHTML = `<h1 class="page-title">Медиатека</h1>
+    view.innerHTML = head('Медиатека') + `
       <ul class="menu">
         <li><a href="#library/liked">${I.heartOn}<span>Избранное</span><span class="cnt">${lib.liked.length || ''}</span>${chev}</a></li>
         <li><a href="#library/artists">${I.person}<span>Артисты</span><span class="cnt">${lib.artists.length || ''}</span>${chev}</a></li>
@@ -1993,7 +2034,7 @@ const views = {
   search() {
     const q0 = (() => { try { return sessionStorage.getItem('nota:q') || ''; } catch { return ''; } })();
     const tab0 = store.get('searchTab', 'all');
-    view.innerHTML = `<h1 class="page-title">Поиск</h1>
+    view.innerHTML = head('Поиск') + `
       <div class="search-bar"><label class="field">${I.search}<input id="q" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Артисты, треки, альбомы, радио" value="${esc(q0)}"><button class="clear" id="qClear" aria-label="Очистить" ${q0 ? '' : 'hidden'}>${I.x}</button></label></div>
       <div class="seg" id="sTabs">${[['all', 'Всё'], ['artists', 'Артисты'], ['tracks', 'Треки'], ['albums', 'Альбомы'], ['radio', 'Радио']].map(([v, n]) => `<button data-stab="${v}" class="${v === tab0 ? 'on' : ''}">${n}</button>`).join('')}</div>
       <div id="results"></div>`;
@@ -2283,7 +2324,7 @@ function route() {
   const tab = { dz: null, dza: null, rappers: 'browse', chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
   const active = tab === undefined ? (views[name] ? name : 'home') : tab;
   if (active !== null) {
-    const tabs = $$('.tabs a[data-tab]'), ti = tabs.findIndex((a) => a.dataset.tab === active);
+    const tabs = $$('.tabs a[data-tab]'), ti = $$('.tab-group a[data-tab]').findIndex((a) => a.dataset.tab === active);
     tabs.forEach((a) => a.classList.toggle('on', a.dataset.tab === active));
     /* the glass drop slides to the chosen tab */
     $('.tabs').style.setProperty('--ti', Math.max(0, ti));
@@ -2294,6 +2335,7 @@ function route() {
   window.scrollTo(0, 0);
   /* the new screen settles in softly */
   view.classList.remove('enter'); void view.offsetWidth; view.classList.add('enter');
+  paintTints();
   watchTitle();
   markPlaying();
 }

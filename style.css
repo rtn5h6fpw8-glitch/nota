@@ -809,3 +809,83 @@ html.no-sub .player.has-sub .big-lyric { height: 0; }
   @keyframes coverAway { to { transform: scale(.86) translateY(30px); opacity: .5; } }
 }
 @media (prefers-reduced-motion: reduce) { .player-bg .blob, #view.enter, .big-lyric.swap { animation: none !important; } .lyr-line { transition: opacity .3s; } }
+
+/* =================== Apple Music 2026 (v37) =================== */
+/* the iPhone's own type, true black, Apple Music red */
+:root { --bg: #000; --surface: #1c1c1e; --surface-2: #2c2c2e; --fg: #fff; --fg-2: rgba(235, 235, 245, .6); --fg-3: rgba(235, 235, 245, .3); --line: rgba(84, 84, 88, .55); --accent: #fa2d48; --display: var(--font); --r-art: 10px; }
+html[data-skin="aurora"] { --display: var(--font); }
+body { background: var(--bg); font-family: var(--font); }
+
+/* big tab titles with the profile button */
+.big-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 30px; }
+.big-head .page-title { margin: 0; }
+.page-title { font-family: var(--font); font-size: 34px; font-weight: 800; letter-spacing: -.022em; line-height: 1.1; }
+.avatar { flex: none; width: 36px; height: 36px; margin-bottom: 2px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 16px; font-weight: 700; background: linear-gradient(140deg, #ff5f6d, #fa2d48 55%, #c41e3a); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); }
+.page-eyebrow { display: none; }
+.sec-head h2 { font-family: var(--font); font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.sec-head h2 a svg { color: var(--fg-2); }
+.section { margin-top: 30px; }
+.artist-head h1, .hero h1, .top-hit b, .empty b, .tile span, .hc-text b, .big-lyric { font-family: var(--font); }
+.artist-head h1 { font-size: 30px; font-weight: 800; letter-spacing: -.022em; }
+.hero h1 { font-size: 22px; font-weight: 700; letter-spacing: -.018em; }
+
+/* covers and cards */
+.card .art { box-shadow: none; }
+.card .t1 { font-size: 13px; font-weight: 500; margin-top: 7px; letter-spacing: -.005em; }
+.card .t2 { font-size: 13px; }
+.row .thumb { border-radius: 6px; }
+.meta b { font-size: 16px; font-weight: 400; }
+.meta small { font-size: 14px; }
+
+/* "Лучшее для вас": tall cards in the colour of their cover */
+.shelf.picks { grid-auto-columns: min(68vw, 270px); gap: 12px; }
+.pick { position: relative; display: flex; flex-direction: column; border-radius: 16px; overflow: hidden; background: var(--tint, #2c2c2e); transition: background-color .6s ease, transform .45s cubic-bezier(.3, 1.5, .5, 1); scroll-snap-align: start; isolation: isolate; }
+.pick.sk { aspect-ratio: 270 / 360; background: var(--surface); }
+.pk-art { position: relative; display: block; aspect-ratio: 1; overflow: hidden; }
+.pk-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pk-art::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 42%; background: linear-gradient(to bottom, transparent, var(--tint, #2c2c2e)); transition: background .6s ease; }
+.pk-f { display: flex; flex-direction: column; gap: 2px; padding: 0 14px 16px; margin-top: -26px; position: relative; min-height: 96px; }
+.pk-f small { font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: rgba(255, 255, 255, .7); }
+.pk-f b { font-size: 18px; font-weight: 700; letter-spacing: -.015em; line-height: 1.2; color: #fff; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.pk-f > span { font-size: 14px; color: rgba(255, 255, 255, .75); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick:active { transform: scale(.97); }
+
+/* tab bar: four tabs in one glass capsule, search as its own glass circle */
+@media (max-width: 899px) {
+  html .tabs { display: flex; gap: 10px; align-items: stretch; background: transparent !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; box-shadow: none !important; border: 0 !important; padding: 0; height: 64px; overflow: visible; }
+  .tab-group { position: relative; flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); padding: 0 6px; border-radius: 32px; }
+  .tab-group a { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg); font-size: 10px; font-weight: 600; }
+  .tab-group a.on { color: var(--accent); }
+  .tab-drop { width: calc((100% - 12px) / 4); }
+  .tab-search { flex: none; width: 64px; border-radius: 32px; display: grid; place-items: center; color: var(--fg); }
+  .tab-search span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tab-search svg { width: 26px; height: 26px; }
+  .tabs .tab-search.on { color: var(--accent); }
+  .tabs a::before { display: none !important; }
+  html[data-skin="classic"] .tab-group a, html[data-skin="classic"] .tab-search { color: #101012; }
+  html[data-skin="classic"] .tab-group a.on, html[data-skin="classic"] .tab-search.on { color: var(--accent); }
+  .mini.lg-glass { border-radius: 30px; height: 60px; }
+}
+@media (min-width: 900px) {
+  .tab-group { display: contents; }
+  .tab-search { display: flex; }
+  .tab-group, .tab-search { background: none !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; box-shadow: none !important; }
+}
+
+/* player: Apple Music layout */
+.player-inner { gap: 20px; }
+.stage { border-radius: 14px; }
+.now h2 { font-family: var(--font); font-size: 21px; font-weight: 700; letter-spacing: -.015em; }
+.now-artist { font-size: 21px; color: rgba(255, 255, 255, .6); }
+.now-btn { width: 30px; height: 30px; }
+.seek .seek-track, .seekbar .seek-track { height: 7px; border-radius: 4px; }
+.controls { margin-top: 2px; }
+.p-bottom { display: flex; justify-content: space-around; align-items: center; margin-top: 4px; }
+.pb { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: rgba(255, 255, 255, .62); transition: color .25s ease, background-color .25s ease, transform .45s cubic-bezier(.3, 1.5, .5, 1); }
+.pb svg { width: 24px; height: 24px; }
+.pb.on, #lyricsBtn.pb.on { color: #111; background: rgba(255, 255, 255, .92); }
+#lyricsBtn.pb.none { opacity: .35; }
+
+/* lyrics: big and bold, like Apple Music */
+.lyr-line { font-family: var(--font); font-size: 30px; font-weight: 800; letter-spacing: -.022em; line-height: 1.16; }
+.big-lyric { font-weight: 700; font-size: 17px; }
