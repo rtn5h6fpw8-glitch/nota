@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '28 · 23.10.2026';
+const APP_VERSION = '29 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);

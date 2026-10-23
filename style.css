@@ -578,3 +578,19 @@ body.scrolled .topnav { opacity: 1; transform: none; visibility: visible; transi
 .player.flying .seek { animation-delay: .03s; } .player.flying .controls { animation-delay: .06s; } .player.flying .queue-wrap { animation-delay: .09s; }
 @keyframes fadeIn { from { opacity: 0; } }
 @keyframes up { from { opacity: 0; transform: translateY(26px); } }
+
+/* =================== lean rendering for iPhone =================== */
+/* everything that forces the phone to repaint on scroll or every frame is replaced by flat equivalents */
+.tabs, .topnav { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+@media (max-width: 899px) { .tabs { background: #151518; } }
+.topnav { background: rgba(5, 5, 6, .96); }
+.card .art, .hc-art, .hero .art { box-shadow: none; }
+.btn.solid { box-shadow: none; }
+.lyr-line, .lyr-line.near { filter: none; }
+.hc-bg img { filter: none; transform: scale(1.2); opacity: .32; }
+.hc-bg::after { background: linear-gradient(120deg, rgba(5, 5, 6, .35), rgba(5, 5, 6, .8)); }
+.art img.sleeve-bg { filter: none; transform: scale(1.1); opacity: .25; }
+.stage { transition: transform .55s var(--ease); box-shadow: 0 24px 50px rgba(0, 0, 0, .55); }
+.stage.paused { box-shadow: 0 24px 50px rgba(0, 0, 0, .55); }
+.mini { box-shadow: 0 10px 24px rgba(0, 0, 0, .5), inset 0 0 0 .5px rgba(255, 255, 255, .08); }
+.tabs { box-shadow: 0 10px 24px rgba(0, 0, 0, .5); }
