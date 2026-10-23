@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '39 · 23.10.2026';
+const APP_VERSION = '40 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -145,16 +145,26 @@ window.noteImgErr = (el) => {
   el.remove();
 };
 /* artwork with a neutral placeholder underneath */
-const ph = `<div class="ph">${I.note}</div>`;
+const ph0 = `<div class="ph">${I.note}</div>`;
+const ph = ph0;
 const phPerson = `<div class="ph">${I.person}</div>`;
 /* big: a sharper copy the browser picks on high-density screens */
-function img(src, person, big, sizes = '(min-width: 600px) 180px, 38vw') {
+/* when a cover is missing, a cover is drawn: two colours picked from the name and its first letters */
+function phGen(seed) {
+  let h = 0; for (const ch of String(seed)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const a = h % 360, b = (a + 35 + (h >> 9) % 50) % 360;
+  const ini = String(seed).replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '♪';
+  return `<div class="ph gen" style="--g1:hsl(${a} 62% 52%);--g2:hsl(${b} 70% 24%)"><span>${esc(ini)}</span></div>`;
+}
+function img(src, person, big, sizes = '(min-width: 600px) 180px, 38vw', seed) {
+  const ph = seed && !person ? phGen(seed) : ph0;
   if (!src) return person ? phPerson : ph;
   const set = big && big !== src ? ` srcset="${esc(src)} 480w, ${esc(big)} 1000w" sizes="${sizes}"` : '';
   return (person ? phPerson : ph) + `<img src="${esc(src)}"${set} alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onload="this.classList.add('in')" onerror="noteImgErr(this)">`;
 }
 /* Internet Archive only offers small thumbnails in lists: show them as a sleeve on a blurred backdrop */
-function sleeve(src) {
+function sleeve(src, seed) {
+  const ph = seed ? phGen(seed) : ph0;
   if (!src) return ph;
   return ph + `<img class="sleeve-bg" src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><img class="sleeve" src="${esc(src)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onload="if(this.naturalWidth>this.naturalHeight*2.2){this.previousElementSibling.remove();this.remove()}else this.classList.add('in')" onerror="this.remove()">`;
 }
@@ -586,7 +596,7 @@ const archive = {
     if (!d || !d.metadata) throw new Error('not found');
     const m = d.metadata;
     const fmtOk = ['VBR MP3', 'MP3', '128Kbps MP3', '64Kbps MP3', 'Ogg Vorbis'].find((f) => d.files.some((x) => x.format === f));
-    const pics = d.files.filter((x) => /^(JPEG|PNG|JPEG Thumb)$/.test(x.format) && !/thumb|_spectrogram|\.gif$/i.test(x.name) && x.format !== 'JPEG Thumb')
+    const pics = d.files.filter((x) => /^(JPEG|PNG|JPEG Thumb)$/.test(x.format) && !/thumb|spectrogram|waveform|\.gif$/i.test(x.name) && !/spectrogram|waveform/i.test(x.format || '') && x.format !== 'JPEG Thumb')
       .sort((a, b) => (+b.size || 0) - (+a.size || 0));
     const coverFile = pics.find((x) => /cover|front|folder/i.test(x.name)) || pics[0];
     const art = coverFile ? `https://archive.org/download/${encodeURIComponent(id)}/${coverFile.name.split('/').map(encodeURIComponent).join('/')}` : this.cover(id);
@@ -750,6 +760,7 @@ const P = {
   async play(i) {
     const t = this.queue[i];
     if (!t) return;
+    this.dir = i > this.idx ? 'next' : i < this.idx ? 'prev' : '';
     this.idx = i;
     this.persist();
     lib.pushRecent(t);
@@ -1362,7 +1373,7 @@ function renderNow() {
   if (!t) return;
   if (t.id !== shownId) {
     shownId = t.id;
-    for (const el of [$('#bigArt'), $('.mini-text'), $('.now-text')]) { el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap'); }
+    for (const el of [$('#bigArt'), $('.mini-text'), $('.now-text')]) { el.classList.remove('swap', 'go-next', 'go-prev'); void el.offsetWidth; el.classList.add(P.dir ? 'go-' + P.dir : 'swap'); }
     loadLyrics(t);
   }
   const art = (t.coverKey && files.covers.get(t.coverKey)) || t.art || 'icon-512.png';
@@ -1743,7 +1754,7 @@ function row(t, i, key, o = {}) {
   if (lib.isHidden(t)) return '';
   const lead = o.numbered
     ? `<span class="num"><span class="n">${o.n ? o.n(t, i) : i + 1}</span><span class="eq"><i></i><i></i><i></i></span></span>`
-    : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art)}</span>`;
+    : `<span class="thumb${t.live ? ' round logo' : ''}">${img(t.thumb || t.art, false, '', undefined, t.title)}</span>`;
   const sub = o.sub ? o.sub(t) : (t.live ? '<span class="tag live">Эфир</span>' : t.preview ? '<span class="tag">30 с</span>' : '') + esc(t.artist || '');
   const dur = !o.noDur && !t.live && t.duration ? fmt(t.duration) : '';
   const q = o.q != null ? ` data-q="${o.q}"` : '';
@@ -1759,19 +1770,11 @@ function card(a) {
   if (lib.isHidden(a)) return '';
   const round = a.kind === 'artist' || a.kind === 'dz-artist';
   const t2 = a.kind === 'dz-artist' ? (a.fans ? fmtCount(a.fans) + ' поклонников' : 'Артист') : round ? (a.followers ? fmtCount(a.followers) + ' подписчиков' : 'Артист') : a.kind === 'dz-album' ? [a.year, a.artist].filter(Boolean).join(' · ') : a.artist || a.year || '';
-  return `<a class="card${round ? ' center' : ''}" href="${hrefOf(a)}"><div class="art${round ? ' round' : ''}">${a.kind === 'ia-album' ? sleeve(a.art) : round ? img(a.avatar, true, a.avatarBig, '(min-width: 600px) 140px, 30vw') : img(a.art, false, a.artBig)}</div><span class="t1">${esc(round ? a.name : a.title)}</span><span class="t2">${esc(t2)}</span></a>`;
+  return `<a class="card${round ? ' center' : ''}" href="${hrefOf(a)}"><div class="art${round ? ' round' : ''}">${a.kind === 'ia-album' ? sleeve(a.art, a.title) : round ? img(a.avatar, true, a.avatarBig, '(min-width: 600px) 140px, 30vw') : img(a.art, false, a.artBig, undefined, a.title)}</div><span class="t1">${esc(round ? a.name : a.title)}</span><span class="t2">${esc(t2)}</span></a>`;
 }
 function playCard(t, k, i) {
   if (lib.isHidden(t)) return '';
-  return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${t.live ? img(t.art) : img(t.art, false, t.artBig)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
-}
-/* the big card at the top of Home: the album of the week over its own blurred cover */
-function heroCard(a) {
-  return `<a class="hero-card" href="${hrefOf(a)}">
-    <span class="hc-bg"><img src="${esc(a.art)}" alt="" referrerpolicy="no-referrer" onerror="noteImgErr(this)"></span>
-    <span class="hc-art">${img(a.art, false, a.artBig, '(min-width: 600px) 220px, 46vw')}</span>
-    <span class="hc-text"><span class="hc-eyebrow">Альбом недели</span><b>${esc(a.title)}</b><small>${esc(a.artist || '')}</small><span class="hc-play">${I.play}Слушать</span></span>
-  </a>`;
+  return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${t.live ? img(t.art, false, '', undefined, t.title) : img(t.art, false, t.artBig, undefined, t.title)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
 }
 /* big title of a tab with the round profile button, as in Apple Music */
 const head = (t) => `<div class="big-head"><h1 class="page-title">${esc(t)}</h1><a class="avatar" href="#settings" aria-label="Настройки">N</a></div>`;
@@ -1809,7 +1812,18 @@ function tintOf(src) {
   tints.set(src, p);
   return p;
 }
+/* album, playlist and artist pages glow at the top in the colour of their cover */
+function pageTint() {
+  const im = view.querySelector('.hero .art img, .artist-head img');
+  if (!im || !im.getAttribute('src') || view.dataset.tintFor === im.getAttribute('src')) return;
+  const src = im.getAttribute('src'); view.dataset.tintFor = src;
+  tintOf(src).then((c) => { if (view.dataset.tintFor === src) { view.style.setProperty('--page-tint', c); view.classList.add('has-tint'); } });
+}
+/* any screen that redraws itself later gets its colours too */
+let tintFrame = 0;
+new MutationObserver(() => { cancelAnimationFrame(tintFrame); tintFrame = requestAnimationFrame(paintTints); }).observe(document.getElementById('view'), { childList: true });
 function paintTints() {
+  pageTint();
   $$('[data-tint]:not(.tinted)').forEach((el) => { el.classList.add('tinted'); if (el.dataset.tint) tintOf(el.dataset.tint).then((c) => el.style.setProperty('--tint', c)); });
 }
 function feature(a, eyebrow) {
@@ -2019,7 +2033,7 @@ const views = {
       const k = reg(a.tracks);
       const total = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
       const year = String(a.date).slice(0, 4);
-      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art)}</div><div>
+      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art, false, '', undefined, a.title)}</div><div>
         <h1>${esc(a.title)}</h1>${a.artistId ? `<a class="by" href="#artist/${a.artistId}">${esc(a.artist)}</a>` : `<div class="by">${esc(a.artist)}</div>`}
         <div class="info">${[a.isAlbum ? 'Альбом' : 'Плейлист', year].filter(Boolean).join(' · ')}</div></div></div>` +
         (a.tracks.length ? playActions(k) + rows(a.tracks, { key: k, numbered: a.isAlbum, showDur: true, sub: a.isAlbum ? () => '' : null }) : '<div class="empty"><b>Нет доступных треков</b></div>') +
@@ -2038,7 +2052,7 @@ const views = {
       if (decodeURIComponent(location.hash.slice(7)) !== id) return;
       const k = reg(a.tracks);
       const total = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
-      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art)}</div><div>
+      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art, false, '', undefined, a.title)}</div><div>
         <h1>${esc(a.title)}</h1>${a.artist ? `<a class="by" href="#ia-artist/${encodeURIComponent(a.artist)}">${esc(a.artist)}</a>` : ''}
         <div class="info">${['Internet Archive', a.year].filter(Boolean).join(' · ')}</div></div></div>` +
         (a.tracks.length ? playActions(k) + rows(a.tracks, { key: k, numbered: true, showDur: true, n: (t, i) => t.n || i + 1, sub: (t) => t.artist && t.artist !== a.artist ? esc(t.artist) : '' }) : '<div class="empty"><b>В этой записи нет аудио</b>Попробуйте другую.</div>') +
@@ -2160,7 +2174,7 @@ const views = {
     const a = g && g.albums.get(title);
     if (!a) { view.innerHTML = backBtn('#mine') + '<div class="empty"><b>Альбом не найден</b></div>'; return; }
     const k = reg(a.tracks);
-    view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.art)}</div><div><h1>${esc(a.title)}</h1><a class="by" href="#mine-artist/${encodeURIComponent(a.artist)}">${esc(a.artist)}</a><div class="info">Моя музыка</div></div></div>` +
+    view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.art, false, '', undefined, a.title)}</div><div><h1>${esc(a.title)}</h1><a class="by" href="#mine-artist/${encodeURIComponent(a.artist)}">${esc(a.artist)}</a><div class="info">Моя музыка</div></div></div>` +
       playActions(k) + `<div data-files>${rows(a.tracks, { key: k, numbered: true, n: (t, i) => t.n || i + 1, sub: (t) => t.artist !== a.artist ? esc(t.artist) : '' })}</div>` +
       `<p class="foot">${tracksWord(a.tracks.length)}</p>`;
   },
@@ -2225,7 +2239,7 @@ const views = {
     whenReady(cached('dz-album:' + id, () => deezer.albumPage(id), 12 * 3600e3), (a) => {
       if (location.hash !== '#dza/' + id) return;
       const k = reg(a.tracks);
-      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art)}</div><div>
+      view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art, false, '', undefined, a.title)}</div><div>
         <h1>${esc(a.title)}</h1><a class="by" href="#dz/${a.dzArtist}">${esc(a.artist)}</a>
         <div class="info">${[{ album: 'Альбом', single: 'Сингл', ep: 'EP', compile: 'Сборник' }[a.type] || 'Альбом', a.year].filter(Boolean).join(' · ')}</div></div></div>` +
         (a.tracks.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` + rows(a.tracks, { key: k, numbered: true, sub: () => '' }) : '<div class="empty"><b>Превью недоступны</b></div>') +
@@ -2533,6 +2547,21 @@ function watchTitle() {
   if (!attach()) setTimeout(attach, 600);
 }
 
+/* holding a finger on a song opens its menu, the way it works on iPhone */
+let lpTimer = 0, lpFired = false, lpX = 0, lpY = 0;
+document.addEventListener('touchstart', (e) => {
+  lpFired = false; clearTimeout(lpTimer);
+  const r = e.target.closest('.row'), more = r && r.querySelector('[data-more]');
+  if (!more || e.target.closest('[data-more]')) return;
+  lpX = e.touches[0].clientX; lpY = e.touches[0].clientY;
+  lpTimer = setTimeout(() => {
+    r.classList.add('lp'); setTimeout(() => r.classList.remove('lp'), 350);
+    more.click(); lpFired = true;
+  }, 480);
+}, { passive: true });
+document.addEventListener('touchmove', (e) => { if (Math.hypot(e.touches[0].clientX - lpX, e.touches[0].clientY - lpY) > 10) clearTimeout(lpTimer); }, { passive: true });
+document.addEventListener('touchend', () => clearTimeout(lpTimer), { passive: true });
+document.addEventListener('click', (e) => { if (lpFired) { lpFired = false; e.preventDefault(); e.stopPropagation(); } }, true);
 /* iOS shows the pressed state (:active) only when the page listens for touches */
 document.addEventListener('touchstart', () => {}, { passive: true });
 
@@ -2564,6 +2593,7 @@ function route() {
     $('.tabs').classList.toggle('no-tab', ti < 0);
   }
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
+  view.classList.remove('has-tint'); delete view.dataset.tintFor;
   fn(arg);
   window.scrollTo(0, 0);
   /* the new screen comes in from the right when going deeper, from the left when going back, and softly between tabs */
