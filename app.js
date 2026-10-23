@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '38 · 23.10.2026';
+const APP_VERSION = '39 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -160,6 +160,8 @@ function sleeve(src) {
 }
 
 /* ======================= library ======================= */
+/* text recognition is turned on for everyone once: the owner asked for lyrics to be ready without tapping */
+(() => { const st = store.get('settings', {}); if (!st.v39) { st.voice = true; st.voiceAll = true; st.v39 = true; store.set('settings', st); } })();
 const lib = {
   liked: store.get('liked', []).filter((t) => t.src !== 'youtube'),
   playlists: store.get('playlists', []),
@@ -167,7 +169,7 @@ const lib = {
   stations: store.get('stations', []),
   artists: store.get('artists', []),
   searches: store.get('searches', []),
-  settings: { jamendo: '', quality: 'high', glass: true, motion: true, sub: true, karaoke: true, fullOnly: false, voice: false, ...store.get('settings', {}) },
+  settings: { jamendo: '', quality: 'high', glass: true, motion: true, sub: true, karaoke: true, fullOnly: false, voice: true, voiceAll: true, ...store.get('settings', {}) },
   hidden: (() => {
     const h = store.get('hidden', null) || { albums: [], tracks: [], artists: [] };
     /* album the owner asked to remove (cover not suitable for the app) */
@@ -983,16 +985,33 @@ const voice = {
     this.worker.onerror = (e) => { for (const j of this.jobs.values()) j.fail(new Error(e.message || 'worker')); this.jobs.clear(); this.worker = null; };
     return this.worker;
   },
-  /* one job at a time; a newer request waits for the older one */
-  run(kind, audio, state) {
-    const go = () => new Promise((ok, fail) => {
+  /* one job at a time; the song that is playing goes first, songs prepared in advance wait */
+  queue: [], active: null,
+  run(kind, getAudio, state, prio = 0, tid = '') {
+    return new Promise((ok, fail) => { this.queue.push({ kind, getAudio, state, prio, tid, ok, fail }); this.sort(); this.pump(); });
+  },
+  bump(tid) { for (const j of this.queue) if (j.tid === tid) j.prio = 9; this.sort(); },
+  sort() { this.queue.sort((a, b) => b.prio - a.prio); },
+  async pump() {
+    if (this.active || !this.queue.length) return;
+    const j = this.active = this.queue.shift();
+    try { j.ok(await this.exec(j.kind, await j.getAudio(), j.state)); } catch (e) { j.fail(e); }
+    this.active = null;
+    setTimeout(() => this.pump(), 50);
+  },
+  exec(kind, audio, state) {
+    return new Promise((ok, fail) => {
       const id = ++this.seq;
       this.jobs.set(id, { ok, fail, state, files: {} });
       this.start().postMessage({ id, model: this.MODELS[kind], audio }, [audio.buffer]);
     });
-    const p = (this.busy || Promise.resolve()).catch(() => {}).then(go);
-    this.busy = p;
-    return p;
+  },
+  /* download the model and get it running while nothing else happens, so the first song does not wait */
+  warmed: {},
+  warm(kind) {
+    if (this.warmed[kind]) return;
+    this.warmed[kind] = true;
+    this.run(kind, async () => new Float32Array(16000), () => {}, -1).catch(() => { this.warmed[kind] = false; });
   },
 };
 /* the song as 16 kHz mono sound, which is what Whisper listens to */
@@ -1040,7 +1059,11 @@ const PHANTOM = /(subtitles|subscribe|thank(s)? (you )?for watching|amara\.org|�
 function linesFromChunks(chunks) {
   const out = [];
   for (const c of chunks) {
-    const text = String(c.text || '').replace(/\s+/g, ' ').trim();
+    const text = String(c.text || '')
+      .replace(/\[[^\]]*\]|\*[^*]*\*/g, ' ')
+      .replace(/\([^)]*\b(music|applause|laugh\w*|instrumental|singing|vocalizing|beat|музыка|аплодисменты|смех)\b[^)]*\)/gi, ' ')
+      .replace(/\b(\S+)(?:[\s,]+\1\b){3,}/gi, '$1 $1 $1')
+      .replace(/\s+/g, ' ').trim();
     if (!text || PHANTOM.test(text) || c.s == null) continue;
     if (out.length > 1 && out[out.length - 1].text === text && out[out.length - 2].text === text) continue;
     out.push({ t: c.s, text });
@@ -1050,28 +1073,30 @@ function linesFromChunks(chunks) {
 function voiceState(st) { lyr.voice = st; if (lyr.open) drawLyrics(); }
 /* previews with synced lyrics: find the shift automatically (when the owner allowed speech recognition) */
 const aligning = new Map();
-function alignPreview(t, d) {
+function alignPreview(t, d, prio = 9) {
   const memo = store.get('pvShift', {});
   if (memo[t.id] != null) return Promise.resolve(memo[t.id]);
-  if (!aligning.has(t.id)) aligning.set(t.id, alignNow(t, d).finally(() => aligning.delete(t.id)));
+  if (!aligning.has(t.id)) aligning.set(t.id, alignNow(t, d, prio).finally(() => aligning.delete(t.id)));
+  else if (prio >= 9) voice.bump(t.id);
   return aligning.get(t.id);
 }
-async function alignNow(t, d) {
-  const memo = store.get('pvShift', {});
+async function alignNow(t, d, prio) {
   const id = t.id;
   const st = (x) => { if (lyr.forId === id) voiceState(x); };
   st({ phase: 'prep' });
-  const chunks = await voice.run('align', await pcmOf(t, 31), st);
+  const chunks = await voice.run('align', () => pcmOf(t, 31), st, prio, t.id);
   const o = previewShift(chunks, d.synced);
+  /* read again right before saving: other songs may have been saved while this one was being listened to */
+  const memo = store.get('pvShift', {});
   memo[id] = o == null ? 'none' : o;
   store.set('pvShift', memo);
   return memo[id];
 }
 async function transcribe(t) {
   const id = t.id;
-  const st = (x) => { if (lyr.forId === id) voiceState(x); };
+  const st = (x) => { if (lyr.forId === id) voiceState({ ...x, kind: 'text' }); };
   st({ phase: 'prep' });
-  const lines = linesFromChunks(await voice.run('text', await pcmOf(t, 420), st));
+  const lines = linesFromChunks(await voice.run('text', () => pcmOf(t, 420), st, 8, t.id));
   try { localStorage.setItem('nota:asr:' + id, JSON.stringify(lines)); } catch {}
   return lines;
 }
@@ -1083,17 +1108,22 @@ function useLines(lines, shift, auto) {
   if (lyr.open) drawLyrics();
   syncLyrics(true);
 }
-/* the next previews in the queue are listened to in advance, so their text is ready the moment they start */
-function alignAhead() {
-  if (!lib.settings.voice) return;
-  const next = P.queue.slice(P.idx + 1, P.idx + 3).filter((n) => n.preview && store.get('pvShift', {})[n.id] == null);
-  for (const n of next) {
-    whenReady(fetchLyrics(n), (d) => {
-      if (!d.synced) return;
-      alignPreview(n, d).then((o) => { if (lyr.forId === n.id && typeof o === 'number' && !lyr.lines && lyr.data && lyr.data.synced) useLines(lyr.data.synced, o); }, () => {});
-    }, () => {});
+/* everything for the coming songs is prepared in advance: the text is downloaded and previews are listened to,
+   so the lyrics are there the moment a song starts. The database is asked gently, one song after another. */
+let prepChain = Promise.resolve();
+const prepared = new Set();
+function prepare(list, n = 6) {
+  for (const t of list.filter((x) => x && !x.live && !prepared.has(x.id)).slice(0, n)) {
+    prepared.add(t.id);
+    prepChain = prepChain.then(() => new Promise((ok) => {
+      whenReady(fetchLyrics(t), (d) => {
+        if (t.preview && d.synced && lib.settings.voice) alignPreview(t, d, 0).then((o) => { if (lyr.forId === t.id && typeof o === 'number' && !lyr.lines && lyr.data && lyr.data.synced) useLines(lyr.data.synced, o); }, () => {});
+        setTimeout(ok, 250);
+      }, () => { prepared.delete(t.id); setTimeout(ok, 1500); });
+    }));
   }
 }
+const alignAhead = () => prepare(P.queue.slice(P.idx + 1, P.idx + 6), 5);
 function runAlign(t, d) {
   alignPreview(t, d).then((o) => {
     if (lyr.forId !== t.id) return;
@@ -1128,8 +1158,16 @@ function loadLyrics(t) {
     if (lyr.open) drawLyrics();
     syncLyrics(true);
     if (!lyr.lines && t.preview && d.synced && known == null && lib.settings.voice) runAlign(t, d);
+    else if (!lyr.lines && !d.inst && (d.none || (!d.synced && !d.plain)) && lib.settings.voiceAll && (t.preview || !t.duration || t.duration <= 420)) runTranscribe(t);
     alignAhead();
-  }, () => { if (P.cur && P.cur.id === lyr.forId) { lyr.data = { err: true }; if (lyr.open) drawLyrics(); } });
+  }, () => {
+    if (!P.cur || P.cur.id !== lyr.forId) return;
+    lyr.data = { err: true };
+    /* the text database cannot be reached: words recognised earlier, or recognise them now */
+    if (asrOf(t.id)) { useLines(asrOf(t.id), 0, true); return; }
+    if (lyr.open) drawLyrics();
+    if (lib.settings.voiceAll && (t.preview || !t.duration || t.duration <= 420)) runTranscribe(t);
+  });
 }
 function lineWords(i) {
   const lines = lyr.lines, line = lines[i];
@@ -1176,16 +1214,16 @@ function drawLyrics() {
   if (!t) return;
   if (t.live) { inner.innerHTML = '<p class="lyr-state">У радиоэфира нет текста песни</p>'; return; }
   if (!d) { inner.innerHTML = '<p class="lyr-state"><span class="spin"></span>Ищу текст песни…</p>'; return; }
-  if (d.err) { inner.innerHTML = '<p class="lyr-state">Не получилось связаться с базой текстов.<br><small>Проверьте интернет. Если включён VPN или блокировщик, попробуйте без него.</small><button class="lyr-act" data-lyr="retry">Попробовать снова</button></p>'; return; }
+  if (d.err && !lyr.lines && !lyr.voice) { inner.innerHTML = '<p class="lyr-state">Не получилось связаться с базой текстов.<br><small>Проверьте интернет. Если включён VPN или блокировщик, попробуйте без него.</small><button class="lyr-act" data-lyr="retry">Попробовать снова</button></p>'; return; }
   const v = lyr.voice;
   if (v && !lyr.lines) {
-    const msg = { prep: 'Готовлю звук…', load: `Скачиваю модель распознавания… ${v.pct || 0}%<small>Это один раз, дальше она хранится на телефоне.</small>`, run: (t.preview ? 'Слушаю превью и ищу это место в тексте…' : 'Распознаю слова по голосу…') + '<small>Можно слушать дальше, это идёт в фоне.</small>' }[v.phase];
+    const msg = { prep: 'Готовлю звук…', load: `Скачиваю модель распознавания… ${v.pct || 0}%<small>Это один раз, дальше она хранится на телефоне.</small>`, run: (t.preview && v.kind !== 'text' ? 'Слушаю превью и ищу это место в тексте…' : 'Распознаю слова по голосу…') + '<small>Можно слушать дальше, это идёт в фоне.</small>' }[v.phase];
     if (msg) { inner.innerHTML = `<p class="lyr-state"><span class="spin"></span>${msg}</p>`; return; }
     if (v.phase === 'err') { inner.innerHTML = '<p class="lyr-state">Распознать не получилось.<small>Возможно, не хватило памяти или интернета.</small><button class="lyr-act" data-lyr="' + (t.preview && d.synced ? 'align' : 'asr') + '">Ещё раз</button></p>'; return; }
     if (v.phase === 'empty') { inner.innerHTML = '<p class="lyr-state">В этой песне не удалось разобрать слов.<small>Похоже, она без вокала или голос сильно спрятан в музыке.</small></p>'; return; }
   }
-  if (d.inst) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
-  if (d.none || (!d.synced && !d.plain)) {
+  if (d.inst && !lyr.lines) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
+  if (!lyr.lines && (d.none || d.err || (!d.synced && !d.plain))) {
     inner.innerHTML = `<p class="lyr-state">Текста этой песни нет в базе текстов.<small>Note может распознать слова по голосу прямо на телефоне и сделать из них субтитры. Модель ${voice.SIZE.text} МБ скачается один раз. Возможны ошибки.</small><button class="lyr-act" data-lyr="asr">Распознать слова</button></p>`;
     return;
   }
@@ -1894,7 +1932,7 @@ const views = {
         (list.length > 8 ? section('Альбомы недели', shelf(list.slice(8, 20).map(card).join(''))) : '');
     }, shelf('<div class="pick sk"></div><div class="pick sk"></div>', 'picks'));
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
-    if (!lib.settings.fullOnly) h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => rowShelf(l.slice(0, 20)), skRows(4)));
+    if (!lib.settings.fullOnly) h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => (prepare(l, 6), rowShelf(l.slice(0, 20))), skRows(4)));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
     h += section('Артисты недели', lazy(mapP(trendingWeek(), (t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)));
     h += section('Андеграунд-рэп', lazy(cached('au-pl:rage', () => audius.search('playlists', 'rage', 16)), (l) => shelf(l.map(card).join(''))), '#underground');
@@ -2253,7 +2291,8 @@ const views = {
       <div class="group">
         ${sw('sub', 'Строка текста под названием', 'В плеере и мини-плеере видна строка, которая сейчас поётся.')}
         ${sw('karaoke', 'Подсветка по словам', 'Слова заполняются по мере пения, как караоке. Если выключить, подсвечивается вся строка.')}
-        ${sw('voice', 'Подсветка текста в превью', 'Note слушает 30-секундное превью прямо на телефоне и находит это место в тексте. Модель 41 МБ скачивается один раз.')}
+        ${sw('voice', 'Подсветка текста в превью', 'Note заранее слушает превью прямо на телефоне и находит это место в тексте. Модель 41 МБ скачивается один раз.')}
+        ${sw('voiceAll', 'Распознавать песни без текста', 'Если текста нет ни в одной базе, Note сам расслышит слова. Модель 77 МБ скачивается один раз, возможны ошибки.')}
       </div>
       <h2 class="set-h">Источники</h2>
       <div class="group src">
@@ -2287,6 +2326,8 @@ const views = {
     $$('[data-sleep]', view).forEach((b) => b.onclick = () => { sleep.set(b.dataset.sleep); $$('[data-sleep]', view).forEach((x) => x.classList.toggle('on', x === b)); sleepNote(); });
     $$('[data-set]', view).forEach((c) => c.onchange = () => {
       st[c.dataset.set] = c.checked; lib.save('settings'); applySettings();
+/* the speech models are fetched quietly a few seconds after start, so the first song does not wait for them */
+setTimeout(() => { if (lib.settings.voice) voice.warm('align'); if (lib.settings.voiceAll) voice.warm('text'); }, 4000);
       if (c.dataset.set === 'sub') syncLyrics(true);
     });
     $('#jmForm').onsubmit = async (e) => {
@@ -2437,7 +2478,7 @@ async function doSearch(q, commit) {
     h += lazy(track(mapP(rapIndex(), (l) => matchArtists(l, q))), (l) => l.length ? section('Папки рэперов', `<ul class="list">${l.slice(0, all ? 4 : 60).map(folderRow).join('')}</ul>`, all && l.length > 4 ? '#rappers' : '') : '', '');
   }
   if (all || tab === 'tracks') {
-    h += lazy(dzTracks, (l) => (l = l.filter((x) => !lib.isHidden(x))).length ? section('Треки · превью', rows(all ? l.slice(0, 5) : l)) : '', skRows(all ? 4 : 10));
+    h += lazy(dzTracks, (l) => (l = l.filter((x) => !lib.isHidden(x))).length ? (prepare(l, 5), section('Треки · превью', rows(all ? l.slice(0, 5) : l))) : '', skRows(all ? 4 : 10));
     h += lazy(auTracks, (l) => l.length ? section('Полные треки независимых артистов', rows(all ? l.slice(0, 5) : l, { showDur: true })) : (all ? '' : ''), all ? '' : skRows(6));
     if (jamendo.on) h += lazy(track(cached('s-jm:' + q, () => jamendo.tracks({ search: q, order: 'relevance' }))), (l) => l.length ? section('Jamendo', rows(all ? l.slice(0, 5) : l, { showDur: true })) : '', '');
   }
