@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '35 · 23.10.2026';
+const APP_VERSION = '36 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -991,15 +991,19 @@ function lineWords(i) {
   if (line.w && line.w.length) {
     out = line.w.map((w, k) => ({ w: w.w, s: w.s, e: k + 1 < line.w.length ? line.w[k + 1].s : Math.min(lines[i + 1] ? lines[i + 1].t : w.s + 1.5, w.s + 1.5) }));
   } else {
+    /* no word timings in the database: spread the line by syllables, about three a second */
+    const syl = (w) => Math.max(1, (w.match(/[aeiouyаеёиоуыэюя]/gi) || []).length);
+    const n = toks.reduce((a, w) => a + syl(w), 0);
     const next = lines[i + 1] ? lines[i + 1].t : line.t + 6;
-    const end = Math.min(next - 0.1, line.t + Math.max(1.4, line.text.length * 0.085));
-    const total = toks.reduce((n, w) => n + w.length + 1.5, 0);
+    const end = Math.max(line.t + 0.8, Math.min(next - 0.15, line.t + n * 0.3 + 0.5));
+    const total = toks.reduce((a, w) => a + syl(w) + 0.4, 0);
     let at = line.t;
-    out = toks.map((w) => { const d = ((w.length + 1.5) / total) * (end - line.t); const r = { w, s: at, e: at + d }; at += d; return r; });
+    out = toks.map((w) => { const d = ((syl(w) + 0.4) / total) * (end - line.t); const r = { w, s: at, e: at + d }; at += d; return r; });
   }
   return (lyr.words[i] = out);
 }
-const wordSpans = (ws) => ws.map((x) => `<span class="w">${esc(x.w)}</span>`).join(' ');
+/* words in brackets are backing vocals: drawn smaller and softer, like in Apple Music */
+const wordSpans = (ws) => { let bg = false; return ws.map((x) => { if (/^[([]/.test(x.w)) bg = true; const h = `<span class="w${bg ? ' bg' : ''}">${esc(x.w)}</span>`; if (/[)\]][,.!?…]*$/.test(x.w)) bg = false; return h; }).join(' '); };
 /* fill each word of the current line as it is sung */
 function paintWords(el, ws, c) {
   if (!el) return;
@@ -1007,13 +1011,18 @@ function paintWords(el, ws, c) {
   for (let k = 0; k < spans.length && k < ws.length; k++) {
     const p = Math.min(1, Math.max(0, (c - ws[k].s) / Math.max(0.05, ws[k].e - ws[k].s)));
     const q = Math.round(p * 50) / 50;
-    if (spans[k]._p !== q) { spans[k]._p = q; spans[k].style.setProperty('--p', q); }
+    if (spans[k]._p !== q) {
+      spans[k]._p = q; spans[k].style.setProperty('--p', q);
+      /* a word held for a long time glows while it is sung */
+      if (ws[k].e - ws[k].s >= 0.9) spans[k].classList.toggle('glow', q > 0 && q < 1);
+    }
   }
 }
 function drawLyrics() {
   const box = $('#lyrics'), inner = $('#lyrInner'), t = P.cur, d = lyr.data;
-  inner.style.transition = 'none'; inner.style.transform = '';
-  requestAnimationFrame(() => { inner.style.transition = ''; });
+  /* first placement jumps straight to the current line; after that lines glide */
+  inner.classList.add('jump'); inner.style.setProperty('--y', '0px');
+  requestAnimationFrame(() => requestAnimationFrame(() => inner.classList.remove('jump')));
   box.classList.remove('plain');
   if (!t) return;
   if (t.live) { inner.innerHTML = '<p class="lyr-state">У радиоэфира нет текста песни</p>'; return; }
@@ -1021,7 +1030,9 @@ function drawLyrics() {
   if (d.inst) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
   if (d.none || (!d.synced && !d.plain)) { inner.innerHTML = `<p class="lyr-state">Текста этой песни нет в базе текстов.<br><br>Тексты есть у большинства известных песен. У независимых артистов и электронной музыки их обычно нет.</p>`; return; }
   if (lyr.lines) {
-    inner.innerHTML = lyr.lines.map((l, i) => `<button class="lyr-line${l.text ? '' : ' gap'}" data-lt="${l.t}">${l.text ? wordSpans(lineWords(i)) : '<span class="dots"><i></i><i></i><i></i></span>'}</button>`).join('') + '<span class="lyr-src">Текст: LRCLIB</span>';
+    inner.innerHTML = lyr.lines.map((l, i) => `<button class="lyr-line${l.text ? '' : ' gap'}" data-lt="${l.t}">${l.text ? wordSpans(lineWords(i)) : '<span class="dots"><i></i><i></i><i></i></span>'}</button>`).join('') +
+      `<div class="lyr-src">Текст: LRCLIB<div class="lyr-off"><button data-off="-0.5">Текст спешит</button><b id="offVal"></b><button data-off="0.5">Текст отстаёт</button></div></div>`;
+    showOffset();
   } else {
     box.classList.add('plain');
     const text = d.plain || (d.synced || []).map((l) => l.text).join('\n');
@@ -1034,6 +1045,7 @@ function showMiniLyric(text, i) {
   if (!lib.settings.sub) text = '';
   const bl = $('#bigLyric');
   bl.innerHTML = text ? wordSpans(i != null && lyr.lines ? lineWords(i) : text.split(' ').map((w) => ({ w }))) : '';
+  if (text) { bl.classList.remove('swap'); void bl.offsetWidth; bl.classList.add('swap'); }
   bl.classList.toggle('on', !!text);
   const ml = $('#miniLyric'), ma = $('#miniArtist');
   if (!text) { if (!ml.hidden) { ml.hidden = true; ma.hidden = false; } return; }
@@ -1044,7 +1056,7 @@ function showMiniLyric(text, i) {
 function syncLyrics(force) {
   const lines = lyr.lines;
   if (!lines || !P.cur) return;
-  const now = pendingSeek != null ? pendingSeek : audio.currentTime - segStart();
+  const now = (pendingSeek != null ? pendingSeek : audio.currentTime - segStart()) + lyrOffset();
   const c = now + 0.3;
   let i = -1;
   for (let k = 0; k < lines.length && lines[k].t <= c; k++) i = k;
@@ -1060,12 +1072,24 @@ function syncLyrics(force) {
     if (lyr.open) paintWords(lyr.activeEl, ws, now + 0.05);
   }
 }
+/* the current line moves up; the lines under it follow one after another, like a wave */
 function moveLyrics(i) {
-  const els = $('#lyrInner').querySelectorAll('.lyr-line');
-  els.forEach((el, k) => { el.classList.toggle('on', k === i); el.classList.toggle('near', Math.abs(k - i) === 1); el.classList.toggle('past', k < i); });
-  const el = els[Math.max(0, i)];
+  const inner = $('#lyrInner'), els = inner.querySelectorAll('.lyr-line');
+  const a = Math.max(0, i), el = els[a];
+  els.forEach((e, k) => {
+    const d = k - a;
+    e.classList.toggle('on', k === i); e.classList.toggle('near', Math.abs(k - i) === 1); e.classList.toggle('past', k < i);
+    e.classList.toggle('far', Math.abs(d) > 9);
+    e.style.transitionDelay = d > 0 && d <= 9 ? d * 45 + 'ms' : '';
+  });
   lyr.activeEl = i >= 0 ? els[i] : null;
-  if (el) $('#lyrInner').style.transform = `translate3d(0,${Math.min(0, $('#lyrics').clientHeight * 0.3 - el.offsetTop)}px,0)`;
+  if (el) inner.style.setProperty('--y', Math.min(0, $('#lyrics').clientHeight * 0.3 - el.offsetTop) + 'px');
+}
+/* per-song correction when the text runs ahead of the singer or behind */
+const lyrOffset = () => (P.cur && store.get('lyrOff', {})[P.cur.id]) || 0;
+function showOffset() {
+  const v = lyrOffset(), el = $('#offVal');
+  if (el) el.textContent = v ? (v > 0 ? '+' : '−') + Math.abs(v).toFixed(1).replace('.', ',') + ' с' : 'точно';
 }
 function setLyricsOpen(on) {
   lyr.open = on; store.set('lyricsOpen', on);
@@ -1076,6 +1100,13 @@ function setLyricsOpen(on) {
 }
 $('#lyricsBtn').onclick = () => setLyricsOpen(!lyr.open);
 $('#lyrInner').addEventListener('click', (e) => {
+  const o = e.target.closest('[data-off]');
+  if (o && P.cur) {
+    const m = store.get('lyrOff', {}), v = Math.round(((m[P.cur.id] || 0) - +o.dataset.off) * 10) / 10;
+    if (v) m[P.cur.id] = v; else delete m[P.cur.id];
+    store.set('lyrOff', m); showOffset(); syncLyrics(true);
+    return;
+  }
   const b = e.target.closest('[data-lt]');
   if (!b) return;
   seekTo(+b.dataset.lt);
@@ -1136,7 +1167,7 @@ function renderNow() {
   requestAnimationFrame(fitTitle);
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
-  $('#playerBg').style.backgroundImage = `url("${art.replace(/"/g, '%22')}")`;
+  paintBg(art);
 
   $('#seek').classList.toggle('disabled', !!t.live);
   $('#tLive').hidden = !t.live;
@@ -1150,8 +1181,31 @@ function renderNow() {
   renderQueue();
   markPlaying();
 }
+/* living background: the cover, shrunk to a few pixels and stretched back up (that alone blurs it),
+   drawn three times from different corners; the copies drift slowly while music plays */
+let bgFor = '';
+function paintBg(src) {
+  if (src === bgFor) return;
+  bgFor = src;
+  const im = new Image();
+  im.referrerPolicy = 'no-referrer';
+  im.onload = () => {
+    if (bgFor !== src) return;
+    const w = im.naturalWidth, h = im.naturalHeight;
+    const crops = [[0, 0, w, h], [0, 0, w * 0.6, h * 0.6], [w * 0.4, h * 0.4, w * 0.6, h * 0.6]];
+    $$('#playerBg canvas').forEach((c, k) => {
+      const x = c.getContext('2d');
+      x.filter = 'blur(2px) saturate(1.7)';
+      x.clearRect(0, 0, 24, 24);
+      x.drawImage(im, ...crops[k], -2, -2, 28, 28);
+    });
+    $('#playerBg').classList.add('ready');
+  };
+  im.src = src;
+}
 function renderPlayState() {
   const on = P.playing;
+  $('#player').classList.toggle('playing', on);
   for (const b of [$('#play'), $('#miniPlay')]) {
     if (b.dataset.on === String(on)) continue;
     b.dataset.on = String(on);
@@ -2238,6 +2292,8 @@ function route() {
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
   fn(arg);
   window.scrollTo(0, 0);
+  /* the new screen settles in softly */
+  view.classList.remove('enter'); void view.offsetWidth; view.classList.add('enter');
   watchTitle();
   markPlaying();
 }

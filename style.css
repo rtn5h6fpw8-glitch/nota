@@ -758,3 +758,54 @@ html.no-motion :where(button, a, [role="button"]):active { transform: none; }
 html.no-karaoke .lyr-line.on .w, html.no-karaoke .big-lyric .w { background-image: none; color: inherit; transform: none; }
 /* text line under the title off */
 html.no-sub .player.has-sub .big-lyric { height: 0; }
+
+/* =================== v36: living player, wave lyrics, softer screens =================== */
+/* the player background: three soft copies of the cover drifting slowly while music plays */
+.player-bg { background: #0c0c0e; }
+.player-bg .blob { position: absolute; left: 50%; top: 50%; width: 160vmax; height: 160vmax; margin: -80vmax 0 0 -80vmax; opacity: 0; transition: opacity .8s ease; will-change: transform; }
+.player-bg.ready .blob { opacity: .95; }
+.player-bg.ready .b2, .player-bg.ready .b3 { opacity: .6; border-radius: 50%; }
+.player-bg .b1 { animation: drift1 70s linear infinite; }
+.player-bg .b2 { width: 110vmax; height: 110vmax; margin: -95vmax 0 0 -85vmax; animation: drift2 48s ease-in-out infinite alternate; }
+.player-bg .b3 { width: 110vmax; height: 110vmax; margin: -20vmax 0 0 -30vmax; animation: drift3 56s ease-in-out infinite alternate; }
+.player:not(.playing) .player-bg .blob { animation-play-state: paused; }
+@keyframes drift1 { to { transform: rotate(360deg); } }
+@keyframes drift2 { from { transform: translate(-8%, -4%) rotate(0deg) scale(1); } to { transform: translate(14%, 18%) rotate(140deg) scale(1.25); } }
+@keyframes drift3 { from { transform: translate(6%, 4%) rotate(0deg) scale(1.1); } to { transform: translate(-16%, -14%) rotate(-120deg) scale(.9); } }
+.player-bg::after { background: linear-gradient(to bottom, rgba(0, 0, 0, .12), rgba(0, 0, 0, .22) 40%, rgba(0, 0, 0, .5)); z-index: 1; }
+
+/* lyrics: each line rides on --y; lines below the current one follow with a small delay */
+.lyr-inner { transform: none !important; transition: none !important; will-change: auto; }
+.lyr-line { transform: translate3d(0, var(--y, 0px), 0) scale(.95); transition: transform .8s cubic-bezier(.22, 1.12, .36, 1), opacity .5s ease; }
+.lyr-line.on { transform: translate3d(0, var(--y, 0px), 0) scale(1); }
+.lyr-line.far, .lyr-inner.jump .lyr-line, .lyr-inner.jump .lyr-src { transition: none !important; }
+.lyr-src { transform: translate3d(0, var(--y, 0px), 0); transition: transform .8s cubic-bezier(.22, 1.12, .36, 1) .3s; }
+.lyrics.plain .lyr-line, .lyrics.plain .lyr-src { transform: none; }
+.lyr-line.past { opacity: .32; }
+.lyr-line.near { opacity: .55; }
+/* backing vocals in brackets: smaller and softer */
+.lyr-line .w.bg, .big-lyric .w.bg { font-size: .72em; font-weight: 600; }
+.lyr-line.on .w.bg { background-image: linear-gradient(90deg, rgba(255, 255, 255, .85) 0, rgba(255, 255, 255, .85) calc(var(--p) * 100%), rgba(255, 255, 255, .25) calc(var(--p) * 100% + .5px)); }
+/* a long held word glows and lifts a little */
+.big-lyric .w { display: inline-block; }
+.lyr-line.on .w, .big-lyric .w { transition: transform .5s cubic-bezier(.3, 1.4, .5, 1), filter .5s ease; }
+.lyr-line.on .w.glow, .big-lyric .w.glow { transform: translateY(-3px) scale(1.06); filter: drop-shadow(0 0 10px rgba(255, 255, 255, .55)); }
+/* timing correction under the text */
+.lyr-off { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.lyr-off button { height: 32px; padding: 0 12px; border-radius: 16px; background: rgba(255, 255, 255, .14); color: #fff; font-size: 13px; font-weight: 600; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2); }
+.lyr-off b { min-width: 52px; text-align: center; color: rgba(255, 255, 255, .7); font-size: 13px; font-weight: 600; }
+/* the line under the title rises in when it changes */
+.big-lyric.swap { animation: subUp .5s cubic-bezier(.2, .9, .3, 1); }
+@keyframes subUp { from { opacity: 0; transform: translateY(10px); } }
+
+/* screens settle in: one soft movement for the whole page, nothing flickers element by element */
+#view.enter { animation: viewIn .32s cubic-bezier(.2, .8, .2, 1); }
+@keyframes viewIn { from { opacity: 0; transform: translate3d(0, 10px, 0); } }
+/* big titles and covers ease away as the page scrolls (where the browser can tie animation to scrolling) */
+@supports (animation-timeline: scroll()) {
+  .page-title { animation: titleAway linear both; animation-timeline: scroll(root); animation-range: 0 160px; transform-origin: 0 100%; }
+  @keyframes titleAway { to { opacity: .15; transform: scale(.92) translateY(-6px); } }
+  .hero .art { animation: coverAway linear both; animation-timeline: scroll(root); animation-range: 0 420px; }
+  @keyframes coverAway { to { transform: scale(.86) translateY(30px); opacity: .5; } }
+}
+@media (prefers-reduced-motion: reduce) { .player-bg .blob, #view.enter, .big-lyric.swap { animation: none !important; } .lyr-line { transition: opacity .3s; } }
