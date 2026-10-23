@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '26 · 23.10.2026';
+const APP_VERSION = '27 · 23.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -91,15 +91,11 @@ function mapP(p, fn) { if (p.v !== undefined) return ready(fn(p.v)); const q = p
 function allP(list) { return list.every((p) => p.v !== undefined) ? ready(list.map((p) => p.v)) : Promise.all(list); }
 function whenReady(p, ok, fail) { if (p.v !== undefined) ok(p.v); else p.then(ok, fail); }
 
-/* Motion (vendor/motion.js) gives the big moves real spring physics; without it CSS takes over */
-const motion = () => (window.Motion && !matchMedia('(prefers-reduced-motion: reduce)').matches ? window.Motion : null);
-const SPRING = { type: 'spring', stiffness: 330, damping: 34, mass: 1 };
 let toastTimer;
 function toast(msg) {
   const el = $('#toast');
   el.textContent = msg; el.hidden = false;
-  const m = motion();
-  if (m) { el.style.animation = 'none'; m.animate(el, { x: ['-50%', '-50%'], y: [14, 0], scale: [0.94, 1], opacity: [0, 1] }, { type: 'spring', stiffness: 420, damping: 30 }); }
+  el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, 2400);
 }
@@ -1018,11 +1014,7 @@ function fitTitle() {
 function renderNow() {
   const t = P.cur;
   const mini = $('#mini');
-  if (t && mini.hidden) {
-    const m = motion();
-    if (m) requestAnimationFrame(() => m.animate(mini, { y: [40, 0], opacity: [0, 1] }, SPRING));
-    else { mini.classList.remove('show'); void mini.offsetWidth; mini.classList.add('show'); }
-  }
+  if (t && mini.hidden) { mini.classList.remove('show'); void mini.offsetWidth; mini.classList.add('show'); }
   mini.hidden = !t;
   if (!t) return;
   if (t.id !== shownId) {
@@ -1198,11 +1190,7 @@ $('#bigLike').onclick = (e) => {
   if (!t) return;
   t.src === 'radio' ? lib.toggleStation(t) : lib.toggleLike(t);
   b.classList.remove('burst');
-  if (b.classList.contains('on')) {
-    const m = motion();
-    if (m) m.animate(b, { scale: [0.7, 1.28, 1] }, { duration: 0.45, ease: 'easeOut' });
-    else { void b.offsetWidth; b.classList.add('burst'); }
-  }
+  if (b.classList.contains('on')) { void b.offsetWidth; b.classList.add('burst'); }
 };
 $('#bigMore').onclick = () => P.cur && trackSheet(P.cur, {});
 $('#bigArtist').onclick = () => {
@@ -1219,8 +1207,6 @@ function openPlayer() {
   playerEl.style.transition = ''; playerEl.style.transform = '';
   playerEl.hidden = false;
   document.documentElement.style.overflow = 'hidden';
-  const m = motion();
-  if (m) { playerEl.style.animation = 'none'; m.animate(playerEl, { y: [innerHeight, 0] }, SPRING).then(() => { playerEl.style.transform = ''; }); }
   requestAnimationFrame(fitTitle);
   startTick();
 }
@@ -1232,13 +1218,7 @@ function hidePlayer() {
 function closePlayer(animate = true) {
   if (playerEl.hidden) return;
   if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return hidePlayer();
-  const m = motion();
-  if (m) {
-    const from = +((playerEl.style.transform.match(/translate(?:3d|Y)?\(\s*(?:0px,\s*)?(-?[\d.]+)px/) || [])[1] || 0);
-    m.animate(playerEl, { y: [from, innerHeight] }, { duration: 0.3, ease: [0.25, 0.8, 0.3, 1] }).then(hidePlayer);
-    return;
-  }
-  const ease = 'transform .32s cubic-bezier(.25,.8,.3,1)';
+  const ease = 'transform .42s cubic-bezier(.32,.72,0,1)';
   playerEl.style.transition = ease;
   playerEl.style.transform = 'translate3d(0,100%,0)';
   let done = false;
@@ -1295,9 +1275,7 @@ playerEl.addEventListener('touchend', () => {
   drag = null;
   const v = dy / Math.max(1, performance.now() - t0);
   if (dy > 140 || (dy > 30 && v > 0.5)) return closePlayer();
-  const m = motion();
-  if (m) { playerEl.style.transition = 'none'; m.animate(playerEl, { y: [dy, 0] }, SPRING).then(() => { playerEl.style.transform = ''; }); return; }
-  const back = 'transform .3s cubic-bezier(.25,.8,.3,1)';
+  const back = 'transform .45s cubic-bezier(.32,.72,0,1)';
   playerEl.style.transition = back; playerEl.style.transform = '';
 });
 /* no pinch zoom (double-tap zoom is turned off in CSS, so quick double taps on buttons still work) */
@@ -1314,8 +1292,6 @@ function openSheet(head, body) {
   $('#sheetHead').innerHTML = head;
   $('#sheetBody').innerHTML = body;
   $('#sheet').hidden = false;
-  const m = motion();
-  if (m) { const sh = $('#sheet .sheet'); sh.style.animation = 'none'; m.animate(sh, { y: [sh.offsetHeight || 400, 0] }, { type: 'spring', stiffness: 380, damping: 36 }); }
   const f = $('#sheetBody input'); if (f) setTimeout(() => f.focus(), 60);
 }
 function closeSheet() { $('#sheet').hidden = true; $('#sheetBody').innerHTML = ''; }
@@ -1414,6 +1390,14 @@ function card(a) {
 function playCard(t, k, i) {
   if (lib.isHidden(t)) return '';
   return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${t.live ? img(t.art) : img(t.art, false, t.artBig)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
+}
+/* the big card at the top of Home: the album of the week over its own blurred cover */
+function heroCard(a) {
+  return `<a class="hero-card" href="${hrefOf(a)}">
+    <span class="hc-bg"><img src="${esc(a.art)}" alt="" referrerpolicy="no-referrer" onerror="noteImgErr(this)"></span>
+    <span class="hc-art">${img(a.art, false, a.artBig, '(min-width: 600px) 220px, 46vw')}</span>
+    <span class="hc-text"><span class="hc-eyebrow">Альбом недели</span><b>${esc(a.title)}</b><small>${esc(a.artist || '')}</small><span class="hc-play">${I.play}Слушать</span></span>
+  </a>`;
 }
 function feature(a, eyebrow) {
   if (lib.isHidden(a)) return '';
@@ -1527,8 +1511,13 @@ const views = {
   home() {
     const recent = lib.recent.slice(0, 12);
     const rk = reg(recent);
-    let h = `<h1 class="page-title">Главная</h1>`;
-    h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => shelf(l.slice(0, 10).map((a) => feature(a, 'Альбом недели')).join(''), 'wide'), skShelf(3, 'wide'));
+    const today = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+    let h = `<p class="page-eyebrow">${esc(today)}</p><h1 class="page-title">Главная</h1>`;
+    h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => {
+      const list = l.filter((a) => !lib.isHidden(a));
+      if (!list.length) return '';
+      return heroCard(list[0]) + (list.length > 1 ? section('Альбомы недели', shelf(list.slice(1, 12).map(card).join(''))) : '');
+    }, `<div class="hero-card sk"></div>`);
     if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
     h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => rowShelf(l.slice(0, 20)), skRows(4)));
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
