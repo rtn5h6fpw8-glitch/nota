@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '40 · 23.10.2026';
+const APP_VERSION = '41 · 24.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -981,8 +981,10 @@ const lyr = { open: store.get('lyricsOpen', false), data: null, lines: null, idx
 /* ---------- voice: Whisper on the phone finds where a preview sits in the song, or writes down the words itself ---------- */
 const voice = {
   worker: null, seq: 0, jobs: new Map(), busy: null,
-  MODELS: { align: 'onnx-community/whisper-tiny', text: 'onnx-community/whisper-base' },
-  SIZE: { align: 41, text: 77 },
+  /* one light model for everything: two heavy ones at once were too much for a phone */
+  MODELS: { align: 'onnx-community/whisper-tiny', text: 'onnx-community/whisper-tiny' },
+  SIZE: { align: 41, text: 41 },
+  lastErr: '',
   start() {
     if (this.worker) return this.worker;
     this.worker = new Worker('voice.js', { type: 'module' });
@@ -1006,7 +1008,9 @@ const voice = {
   async pump() {
     if (this.active || !this.queue.length) return;
     const j = this.active = this.queue.shift();
-    try { j.ok(await this.exec(j.kind, await j.getAudio(), j.state)); } catch (e) { j.fail(e); }
+    /* work prepared in advance waits until the screen is calm, so scrolling never stutters */
+    if (j.prio <= 0) while (Date.now() - lastTouch < 1500 || document.hidden) await new Promise((ok) => setTimeout(ok, 700));
+    try { j.ok(await this.exec(j.kind, await j.getAudio(), j.state)); } catch (e) { this.lastErr = String((e && e.message) || e); store.set('voiceErr', this.lastErr); j.fail(e); }
     this.active = null;
     setTimeout(() => this.pump(), 50);
   },
@@ -1025,6 +1029,8 @@ const voice = {
     this.run(kind, async () => new Float32Array(16000), () => {}, -1).catch(() => { this.warmed[kind] = false; });
   },
 };
+let lastTouch = 0;
+for (const ev of ['scroll', 'touchmove', 'wheel']) document.addEventListener(ev, () => { lastTouch = Date.now(); }, { capture: true, passive: true });
 /* the song as 16 kHz mono sound, which is what Whisper listens to */
 async function pcmOf(t, maxSec) {
   let buf;
@@ -1041,9 +1047,25 @@ async function pcmOf(t, maxSec) {
   ac.close && ac.close();
   const s0 = seg && P.cur && P.cur.id === t.id ? seg.start : 0;
   const len = Math.min(dec.duration - s0, maxSec || 1e9);
-  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(len * 16000)), 16000);
-  const src = off.createBufferSource(); src.buffer = dec; src.connect(off.destination); src.start(0, s0, len);
-  return (await off.startRendering()).getChannelData(0).slice();
+  /* the browser's own converter is the cleanest and runs outside the screen's thread */
+  try {
+    const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(len * 16000)), 16000);
+    const src = off.createBufferSource(); src.buffer = dec; src.connect(off.destination); src.start(0, s0, len);
+    return (await off.startRendering()).getChannelData(0).slice();
+  } catch {}
+  /* fallback: mixed to one channel and brought down to 16 kHz by averaging, which every browser can do */
+  const sr = dec.sampleRate, ratio = sr / 16000, n = Math.max(1, Math.floor(len * 16000));
+  const chs = Array.from({ length: dec.numberOfChannels }, (_, c) => dec.getChannelData(c));
+  const out = new Float32Array(n), from = Math.floor(s0 * sr);
+  for (let i = 0; i < n; i++) {
+    /* small portions with pauses between them, so the screen never waits for this */
+    if (i % 48000 === 47999) await new Promise((ok) => setTimeout(ok, 0));
+    const a = from + Math.floor(i * ratio), b = Math.max(a + 1, from + Math.floor((i + 1) * ratio));
+    let sum = 0;
+    for (const ch of chs) for (let k = a; k < b && k < ch.length; k++) sum += ch[k];
+    out[i] = sum / ((b - a) * chs.length);
+  }
+  return out;
 }
 const words = (x) => norm2(x).split(' ').filter((w) => w.length > 1);
 const norm2 = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}']+/gu, ' ').replace(/'/g, '').trim();
@@ -1123,18 +1145,18 @@ function useLines(lines, shift, auto) {
    so the lyrics are there the moment a song starts. The database is asked gently, one song after another. */
 let prepChain = Promise.resolve();
 const prepared = new Set();
-function prepare(list, n = 6) {
-  for (const t of list.filter((x) => x && !x.live && !prepared.has(x.id)).slice(0, n)) {
+function prepare(list, n = 6, listen = 3) {
+  for (const [i, t] of list.filter((x) => x && !x.live && !prepared.has(x.id)).slice(0, n).entries()) {
     prepared.add(t.id);
     prepChain = prepChain.then(() => new Promise((ok) => {
       whenReady(fetchLyrics(t), (d) => {
-        if (t.preview && d.synced && lib.settings.voice) alignPreview(t, d, 0).then((o) => { if (lyr.forId === t.id && typeof o === 'number' && !lyr.lines && lyr.data && lyr.data.synced) useLines(lyr.data.synced, o); }, () => {});
+        if (i < listen && t.preview && d.synced && lib.settings.voice) alignPreview(t, d, 0).then((o) => { if (lyr.forId === t.id && typeof o === 'number' && !lyr.lines && lyr.data && lyr.data.synced) useLines(lyr.data.synced, o); }, () => {});
         setTimeout(ok, 250);
       }, () => { prepared.delete(t.id); setTimeout(ok, 1500); });
     }));
   }
 }
-const alignAhead = () => prepare(P.queue.slice(P.idx + 1, P.idx + 6), 5);
+const alignAhead = () => prepare(P.queue.slice(P.idx + 1, P.idx + 6), 5, 2);
 function runAlign(t, d) {
   alignPreview(t, d).then((o) => {
     if (lyr.forId !== t.id) return;
@@ -1230,7 +1252,7 @@ function drawLyrics() {
   if (v && !lyr.lines) {
     const msg = { prep: 'Готовлю звук…', load: `Скачиваю модель распознавания… ${v.pct || 0}%<small>Это один раз, дальше она хранится на телефоне.</small>`, run: (t.preview && v.kind !== 'text' ? 'Слушаю превью и ищу это место в тексте…' : 'Распознаю слова по голосу…') + '<small>Можно слушать дальше, это идёт в фоне.</small>' }[v.phase];
     if (msg) { inner.innerHTML = `<p class="lyr-state"><span class="spin"></span>${msg}</p>`; return; }
-    if (v.phase === 'err') { inner.innerHTML = '<p class="lyr-state">Распознать не получилось.<small>Возможно, не хватило памяти или интернета.</small><button class="lyr-act" data-lyr="' + (t.preview && d.synced ? 'align' : 'asr') + '">Ещё раз</button></p>'; return; }
+    if (v.phase === 'err') { inner.innerHTML = '<p class="lyr-state">Распознать не получилось.<small>' + esc(voice.lastErr || 'Возможно, не хватило памяти или интернета.') + '</small><button class="lyr-act" data-lyr="' + (t.preview && d.synced ? 'align' : 'asr') + '">Ещё раз</button></p>'; return; }
     if (v.phase === 'empty') { inner.innerHTML = '<p class="lyr-state">В этой песне не удалось разобрать слов.<small>Похоже, она без вокала или голос сильно спрятан в музыке.</small></p>'; return; }
   }
   if (d.inst && !lyr.lines) { inner.innerHTML = '<p class="lyr-state">Эта песня без слов</p>'; return; }
@@ -2306,7 +2328,9 @@ const views = {
         ${sw('sub', 'Строка текста под названием', 'В плеере и мини-плеере видна строка, которая сейчас поётся.')}
         ${sw('karaoke', 'Подсветка по словам', 'Слова заполняются по мере пения, как караоке. Если выключить, подсвечивается вся строка.')}
         ${sw('voice', 'Подсветка текста в превью', 'Note заранее слушает превью прямо на телефоне и находит это место в тексте. Модель 41 МБ скачивается один раз.')}
-        ${sw('voiceAll', 'Распознавать песни без текста', 'Если текста нет ни в одной базе, Note сам расслышит слова. Модель 77 МБ скачивается один раз, возможны ошибки.')}
+        ${sw('voiceAll', 'Распознавать песни без текста', 'Если текста нет ни в одной базе, Note сам расслышит слова. Та же модель 41 МБ, возможны ошибки.')}
+      </div>
+      <div class="group"><h3>Проверка распознавания</h3><p class="note" id="vdiag">${voice.lastErr || store.get('voiceErr', '') ? 'Последняя ошибка: ' + esc(voice.lastErr || store.get('voiceErr', '')) : 'Если текст в превью не подсвечивается, нажмите — Note проверит каждый шаг и покажет, где проблема.'}</p><button class="btn" id="vtest">Проверить распознавание</button>
       </div>
       <h2 class="set-h">Источники</h2>
       <div class="group src">
@@ -2341,7 +2365,7 @@ const views = {
     $$('[data-set]', view).forEach((c) => c.onchange = () => {
       st[c.dataset.set] = c.checked; lib.save('settings'); applySettings();
 /* the speech models are fetched quietly a few seconds after start, so the first song does not wait for them */
-setTimeout(() => { if (lib.settings.voice) voice.warm('align'); if (lib.settings.voiceAll) voice.warm('text'); }, 4000);
+setTimeout(() => { if (lib.settings.voice || lib.settings.voiceAll) voice.warm('align'); }, 8000);
       if (c.dataset.set === 'sub') syncLyrics(true);
     });
     $('#jmForm').onsubmit = async (e) => {
@@ -2365,6 +2389,22 @@ setTimeout(() => { if (lib.settings.voice) voice.warm('align'); if (lib.settings
       toast('Кэш очищен'); mem();
     };
     syncSleepUi = sleepNote;
+    $('#vtest').onclick = async () => {
+      const out = $('#vdiag'), t0 = Date.now(), say = (x) => { if (out.isConnected) out.innerHTML = x; };
+      const sec = () => ((Date.now() - t0) / 1000).toFixed(1) + ' с';
+      try {
+        say('Беру превью из чарта…');
+        const list = await cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3);
+        const t = list.find((x) => x.preview);
+        say(`Скачиваю и готовлю звук «${esc(t.title)}»…`);
+        const audio = await pcmOf(t, 31);
+        say(`Звук готов (${sec()}). Загружаю модель…`);
+        const chunks = await voice.run('align', async () => audio, (st) => say(st.phase === 'load' ? `Скачиваю модель… ${st.pct}% (${sec()})` : `Модель готова, распознаю… (${sec()})`), 9);
+        const text = chunks.map((c) => c.text).join(' ').trim();
+        say(`Работает. Распознано за ${sec()}:<br>«${esc(text.slice(0, 160)) || 'слов не найдено'}»`);
+        store.set('voiceErr', ''); voice.lastErr = '';
+      } catch (e) { say(`Ошибка через ${sec()}: ${esc(String((e && e.message) || e))}`); }
+    };
   },
 };
 

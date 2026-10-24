@@ -903,3 +903,8 @@ body { background: var(--bg); font-family: var(--font); }
 .mini-text.go-prev b, .mini-text.go-prev small, .now-text.go-prev h2, .now-text.go-prev .now-artist { animation: txtPrev .35s cubic-bezier(.2, .85, .25, 1); }
 @keyframes txtNext { from { opacity: 0; transform: translate3d(16px, 0, 0); } }
 @keyframes txtPrev { from { opacity: 0; transform: translate3d(-16px, 0, 0); } }
+
+/* lighter for the phone (v41): softer blur on the glass, smaller drifting layers in the player */
+.lg-glass, .toast, .sheet { -webkit-backdrop-filter: blur(14px) saturate(160%) !important; backdrop-filter: blur(14px) saturate(160%) !important; }
+.player-bg .blob { width: 130vmax; height: 130vmax; margin: -65vmax 0 0 -65vmax; }
+.player-bg .b3 { display: none; }
