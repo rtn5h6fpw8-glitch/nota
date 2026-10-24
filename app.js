@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '41 · 24.10.2026';
+const APP_VERSION = '42 · 24.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -102,6 +102,9 @@ function toast(msg) {
 
 /* ======================= icons ======================= */
 const I = {
+  pin: '<svg viewBox="0 0 24 24"><path d="M14.6 2.6 21.4 9.4l-1.4 1.4-1-1-3.6 3.6.5 4.6-1.4 1.4-4.2-4.2-5.1 5.1-1.4-1.4 5.1-5.1-4.2-4.2 1.4-1.4 4.6.5L13.6 5l-1-1z"/></svg>',
+  add: '<svg viewBox="0 0 24 24"><path d="M12 2.2a9.8 9.8 0 1 1 0 19.6 9.8 9.8 0 0 1 0-19.6zm0 1.8a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm.9 3.6v3.5h3.5v1.8h-3.5v3.5h-1.8v-3.5H7.6v-1.8h3.5V7.6z"/></svg>',
+  added: '<svg viewBox="0 0 24 24"><path d="M12 2.2a9.8 9.8 0 1 1 0 19.6 9.8 9.8 0 0 1 0-19.6zm4.6 6.3-6 6-2.9-2.9-1.3 1.3 4.2 4.2 7.3-7.3z"/></svg>',
   play: '<svg viewBox="0 0 24 24"><path d="M7 4.6v14.8c0 .9 1 1.4 1.7.9l11.2-7.4c.6-.4.6-1.4 0-1.8L8.7 3.7C8 3.2 7 3.7 7 4.6z"/></svg>',
   pause: '<svg viewBox="0 0 24 24"><rect x="5.5" y="4" width="4.6" height="16" rx="1.3"/><rect x="13.9" y="4" width="4.6" height="16" rx="1.3"/></svg>',
   heart: '<svg viewBox="0 0 24 24"><path d="M12 20.3 4.2 12.8A5 5 0 0 1 12 6.4a5 5 0 0 1 7.8 6.4zm0-2.6 6.3-6.2a3 3 0 0 0-4.7-3.8L12 9.4l-1.6-1.7a3 3 0 0 0-4.7 3.8z"/></svg>',
@@ -1135,6 +1138,7 @@ async function transcribe(t) {
 }
 const asrOf = (id) => { try { return JSON.parse(localStorage.getItem('nota:asr:' + id)); } catch { return null; } };
 function useLines(lines, shift, auto) {
+  setTimeout(() => lyrCard(lyr.idx), 0);
   lyr.lines = lines && lines.length ? lines : null; lyr.shift = shift || 0; lyr.auto = !!auto; lyr.words = {}; lyr.idx = -2; lyr.voice = null;
   $('#player').classList.toggle('has-sub', !!lyr.lines);
   $('#lyricsBtn').classList.toggle('none', false);
@@ -1190,6 +1194,7 @@ function loadLyrics(t) {
     $('#player').classList.toggle('has-sub', !!lyr.lines);
     if (lyr.open) drawLyrics();
     syncLyrics(true);
+    lyrCard(lyr.idx);
     if (!lyr.lines && t.preview && d.synced && known == null && lib.settings.voice) runAlign(t, d);
     else if (!lyr.lines && !d.inst && (d.none || (!d.synced && !d.plain)) && lib.settings.voiceAll && (t.preview || !t.duration || t.duration <= 420)) runTranscribe(t);
     alignAhead();
@@ -1276,7 +1281,22 @@ function drawLyrics() {
   lyr.idx = -2;
   syncLyrics(true);
 }
+/* the "Текст песни" card under the player: the line being sung and the next ones */
+function lyrCard(i) {
+  const card = $('#lyrCard'), body = $('#lcBody');
+  const d = lyr.data;
+  if (lyr.lines) {
+    const a = Math.max(0, i), lines = lyr.lines.slice(a, a + 4).filter((l) => l.text);
+    card.hidden = !lines.length;
+    body.innerHTML = lines.map((l, k) => `<p class="${k === 0 && i >= 0 ? 'on' : ''}">${esc(l.text)}</p>`).join('');
+  } else if (d && d.plain) {
+    card.hidden = false;
+    body.innerHTML = d.plain.split('\n').filter(Boolean).slice(0, 4).map((x) => `<p>${esc(x)}</p>`).join('');
+  } else card.hidden = true;
+}
+$('#lyrCard').onclick = () => { setLyricsOpen(true); $('#player').scrollTo({ top: 0, behavior: 'smooth' }); };
 function showMiniLyric(text, i) {
+  lyrCard(i == null ? -1 : i);
   if (!lib.settings.sub) text = '';
   const bl = $('#bigLyric');
   bl.innerHTML = text ? wordSpans(i != null && lyr.lines ? lineWords(i) : text.split(' ').map((w) => ({ w }))) : '';
@@ -1412,6 +1432,7 @@ function renderNow() {
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
   paintBg(art);
+  $('#pCtx').textContent = t.album || (t.live ? 'Радио' : t.preview ? 'Превью 30 секунд' : t.artist || '');
 
   $('#seek').classList.toggle('disabled', !!t.live);
   $('#tLive').hidden = !t.live;
@@ -1425,27 +1446,20 @@ function renderNow() {
   renderQueue();
   markPlaying();
 }
-/* living background: the cover, shrunk to a few pixels and stretched back up (that alone blurs it),
-   drawn three times from different corners; the copies drift slowly while music plays */
+/* the player and the mini player take their colour from the cover, the way Spotify does */
 let bgFor = '';
+const hslParts = (c) => (String(c).match(/hsl\((\d+) (\d+)% (\d+)%\)/) || [0, 0, 0, 18]).slice(1).map(Number);
 function paintBg(src) {
   if (src === bgFor) return;
   bgFor = src;
-  const im = new Image();
-  im.referrerPolicy = 'no-referrer';
-  im.onload = () => {
+  tintOf(src).then((c) => {
     if (bgFor !== src) return;
-    const w = im.naturalWidth, h = im.naturalHeight;
-    const crops = [[0, 0, w, h], [0, 0, w * 0.6, h * 0.6], [w * 0.4, h * 0.4, w * 0.6, h * 0.6]];
-    $$('#playerBg canvas').forEach((c, k) => {
-      const x = c.getContext('2d');
-      x.filter = 'blur(2px) saturate(1.7)';
-      x.clearRect(0, 0, 24, 24);
-      x.drawImage(im, ...crops[k], -2, -2, 28, 28);
-    });
-    $('#playerBg').classList.add('ready');
-  };
-  im.src = src;
+    const [h, sat] = hslParts(c), s2 = Math.max(28, Math.min(62, sat + 8));
+    const pl = $('#player'), mini = $('#mini');
+    pl.style.setProperty('--p-tint', `hsl(${h} ${s2}% 34%)`);
+    pl.style.setProperty('--p-tint2', `hsl(${h} ${s2}% 42%)`);
+    mini.style.setProperty('--m-tint', `hsl(${h} ${Math.min(55, s2)}% 22%)`);
+  });
 }
 function renderPlayState() {
   const on = P.playing;
@@ -1511,7 +1525,7 @@ function refreshLike() {
   const st = t.src === 'radio';
   const on = st ? lib.isSaved(t.id) : lib.isLiked(t.id);
   const b = $('#bigLike');
-  b.innerHTML = on ? I.heartOn : I.heart;
+  b.innerHTML = on ? I.added : I.add;
   b.classList.toggle('on', on);
   b.setAttribute('aria-label', st ? (on ? 'Удалить станцию' : 'Сохранить станцию') : on ? 'Удалить из избранного' : 'В избранное');
 }
@@ -1799,11 +1813,20 @@ function playCard(t, k, i) {
   return `<button class="card${t.live ? ' center' : ''}" data-play="${k}" data-i="${i}"><div class="art${t.live ? ' round logo' : ''}">${t.live ? img(t.art, false, '', undefined, t.title) : img(t.art, false, t.artBig, undefined, t.title)}</div><span class="t1">${esc(t.title)}</span><span class="t2">${esc(t.artist || '')}</span></button>`;
 }
 /* big title of a tab with the round profile button, as in Apple Music */
-const head = (t) => `<div class="big-head"><h1 class="page-title">${esc(t)}</h1><a class="avatar" href="#settings" aria-label="Настройки">N</a></div>`;
-/* tall card for "Лучшее для вас": the cover on top, a band in the cover's own colour below */
-function pick(a, eyebrow) {
-  if (lib.isHidden(a)) return '';
-  return `<a class="pick" href="${hrefOf(a)}" data-tint="${esc(a.art || '')}"><span class="pk-art">${img(a.art, false, a.artBig, '(min-width: 600px) 270px, 68vw')}</span><span class="pk-f"><small>${esc(eyebrow)}</small><b>${esc(a.title)}</b><span>${esc(a.artist || '')}</span></span></a>`;
+const head = (t, extra = '') => `<div class="big-head"><a class="avatar" href="#settings" aria-label="Настройки">N</a><h1 class="page-title">${esc(t)}</h1>${extra}</div>`;
+/* mixes on Home: one per genre, drawn like the colourful mix covers */
+const MIXES = [['Hip-Hop/Rap', 'Хип-хоп'], ['Trap', 'Трэп'], ['Electronic', 'Электроника'], ['Pop', 'Поп'], ['R&B/Soul', 'R&B'], ['Lo-Fi', 'Lo-fi'], ['Rock', 'Рок'], ['House', 'Хаус']];
+const PALETTE = ['#e13300', '#1e3264', '#8400e7', '#e8115b', '#148a08', '#503750', '#477d95', '#ba5d07', '#0d73ec', '#27856a', '#8d67ab', '#e91429', '#b49bc8', '#509bf5', '#dc148c', '#7358ff', '#a56752', '#777777', '#608108', '#1d3164', '#af2896', '#283ea8', '#e1118c', '#2d46b9'];
+function mixCard(g, n, i) {
+  return `<a class="card" href="#genre/${encodeURIComponent(g)}"><div class="art mix" style="--c:${PALETTE[(i * 5 + 3) % PALETTE.length]}" data-genre-art="${esc(g)}"><span class="mx-band"><small>Микс</small><b>${esc(n)}</b></span></div><span class="t1">${esc(n)}: микс</span><span class="t2">Лучшее за неделю</span></a>`;
+}
+/* the start of Search: bright category tiles with a tilted cover in the corner */
+function browseTiles() {
+  const items = [['#chart/week', 'Топ-100 недели', 'Electronic'], ['#underground', 'Андеграунд-рэп', 'Hip-Hop/Rap'], ['#rappers', 'Рэперы A–Z', 'Trap'], ['#countries', 'Радио мира', '']]
+    .concat(GENRES.map(([g, n]) => ['#genre/' + encodeURIComponent(g), n, g]));
+  const arch = ARCHIVE_SETS.map(([k, n]) => `<a class="tile sp" href="#archive/${k}" style="--c:${PALETTE[(k.length * 7) % PALETTE.length]}" data-archive-art="${k}"><span>${esc(n)}</span></a>`);
+  return section('Начни просматривать', `<div class="tiles sp">${items.map(([href, n, g], i) => `<a class="tile sp" href="${href}" style="--c:${PALETTE[i % PALETTE.length]}"${g ? ` data-genre-art="${esc(g)}"` : ''}><span>${esc(n)}</span></a>`).join('')}</div>`) +
+    section('Из архивов', `<div class="tiles sp">${arch.join('')}</div>`);
 }
 /* the colour of a cover's lower part, toned down so white text stays readable;
    covers from servers that do not allow reading pixels get a calm colour picked from their address */
@@ -1852,9 +1875,8 @@ function feature(a, eyebrow) {
   if (lib.isHidden(a)) return '';
   return `<a class="feature" href="${hrefOf(a)}"><div><div class="eyebrow">${esc(eyebrow)}</div><div class="ft">${esc(a.title)}</div><div class="fs">${esc(a.artist || '')}</div></div><div class="art">${img(a.art, false, a.artBig, '(min-width: 600px) 380px, 92vw')}</div></a>`;
 }
-function section(title, inner, href) {
-  const h = href ? `<a href="${href}">${esc(title)}${I.chev}</a>` : esc(title);
-  return `<section class="section"><div class="sec-head"><h2>${h}</h2></div>${inner}</section>`;
+function section(title, inner, href, cat) {
+  return `<section class="section"${cat ? ` data-cat="${cat}"` : ''}><div class="sec-head"><h2>${esc(title)}</h2>${href ? `<a class="all" href="${href}">Показать все</a>` : ''}</div>${inner}</section>`;
 }
 function rowShelf(list) {
   const k = reg(list);
@@ -1875,7 +1897,7 @@ function lazy(promise, render, skel = skShelf()) {
   return `<div id="${id}">${skel}</div>`;
 }
 const backBtn = (href) => `<div class="topbar"><a class="back" href="${href || '#'}" ${href ? '' : 'data-back'}>${I.back}Назад</a></div>`;
-const playActions = (k, label = 'Слушать') => `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}${label}</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>`;
+const playActions = (k, left = '') => `<div class="sp-actions"><div class="sp-left">${left}</div><button class="ic-btn" data-shuffle="${k}" aria-label="Перемешать">${I.shuffle}</button><button class="fab" data-play="${k}" data-i="0" aria-label="Слушать">${I.play}</button></div>`;
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 
 document.addEventListener('click', (e) => {
@@ -1960,55 +1982,51 @@ const views = {
   home() {
     const recent = lib.recent.slice(0, 12);
     const rk = reg(recent);
-    let h = head('Главная');
-    h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => {
-      const list = l.filter((a) => !lib.isHidden(a));
-      if (!list.length) return '';
-      return section('Лучшее для вас', shelf(list.slice(0, 8).map((a, i) => pick(a, i ? 'Популярно на этой неделе' : 'Альбом недели')).join(''), 'picks')) +
-        (list.length > 8 ? section('Альбомы недели', shelf(list.slice(8, 20).map(card).join(''))) : '');
-    }, shelf('<div class="pick sk"></div><div class="pick sk"></div>', 'picks'));
-    if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')));
-    if (!lib.settings.fullOnly) h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => (prepare(l, 6), rowShelf(l.slice(0, 20))), skRows(4)));
-    h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week');
-    h += section('Артисты недели', lazy(mapP(trendingWeek(), (t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)));
-    h += section('Андеграунд-рэп', lazy(cached('au-pl:rage', () => audius.search('playlists', 'rage', 16)), (l) => shelf(l.map(card).join(''))), '#underground');
-    h += section('Радио в России', lazy(cached('radio:RU|', () => radio.search({ country: 'RU', limit: 80 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#radio');
-    h += section('Популярные плейлисты', lazy(cached('au-playlists', () => audius.trendingLists('playlist')), (l) => shelf(l.map(card).join(''))));
-    for (const [key, name, q] of ARCHIVE_SETS.slice(0, 2)) h += section(name, lazy(cached('ia2:' + key, () => archive.search(q, { rows: 20 })), (l) => shelf(l.map(card).join(''))), '#archive/' + key);
+    const cat = (() => { try { return sessionStorage.getItem('nota:cat') || 'all'; } catch { return 'all'; } })();
+    const chips = [['all', 'Всё'], ['music', 'Музыка'], ['rap', 'Рэп'], ['radio', 'Радио'], ['archive', 'Архив']];
+    let h = `<div class="big-head home-head"><a class="avatar" href="#settings" aria-label="Настройки">N</a><div class="chips">${chips.map(([v, n]) => `<button class="chip${v === cat ? ' on' : ''}" data-cat-chip="${v}">${n}</button>`).join('')}</div></div>`;
+    /* quick access: favourite songs, what played recently, then albums of the week */
+    const quick = [`<a class="qt" href="#library/liked"><span class="qt-art liked">${I.heartOn}</span><b>Любимые треки</b></a>`];
+    const seen = new Set();
+    recent.forEach((t, i) => { if (quick.length < 8 && !seen.has(t.id) && !lib.isHidden(t)) { seen.add(t.id); quick.push(`<button class="qt" data-play="${rk}" data-i="${i}"><span class="qt-art">${img(t.art, false, '', '56px', t.title)}</span><b>${esc(t.title)}</b></button>`); } });
+    const need = 8 - quick.length;
+    h += `<div class="quick" data-cat="music rap">${quick.join('')}${need > 0 ? lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => l.filter((a) => !lib.isHidden(a)).slice(0, need).map((a) => `<a class="qt" href="${hrefOf(a)}"><span class="qt-art">${img(a.art, false, '', '56px', a.title)}</span><b>${esc(a.title)}</b></a>`).join(''), '') : ''}</div>`;
+    h += section('Миксы для тебя', shelf(MIXES.map(([g, n], i) => mixCard(g, n, i)).join('')), '', 'music rap');
+    if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')), '', 'music rap');
+    h += section('Альбомы недели', lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => shelf(l.filter((a) => !lib.isHidden(a)).slice(0, 16).map(card).join(''))), '', 'music');
+    if (!lib.settings.fullOnly) h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => (prepare(l, 6), rowShelf(l.slice(0, 20))), skRows(4)), '', 'music');
+    h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week', 'music');
+    if (!lib.settings.fullOnly) h += section('Хип-хоп чарт · превью', lazy(cached('dz-chart:116', () => deezer.chart(116, 40), 6 * 3600e3), (l) => (prepare(l, 3, 1), rowShelf(l.slice(0, 20))), skRows(4)), '', 'rap');
+    h += section('Андеграунд-рэп', lazy(cached('au-pl:rage', () => audius.search('playlists', 'rage', 16)), (l) => shelf(l.map(card).join(''))), '#underground', 'rap');
+    h += section('Артисты недели', lazy(mapP(trendingWeek(), (t) => artistsOf(t, 14)), (l) => shelf(l.map(card).join(''), 'small'), skShelf(5, 'small', true)), '', 'music rap');
+    h += section('Популярные плейлисты', lazy(cached('au-playlists', () => audius.trendingLists('playlist')), (l) => shelf(l.map(card).join(''))), '', 'music');
+    h += section('Радио в России', lazy(cached('radio:RU|', () => radio.search({ country: 'RU', limit: 80 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#radio', 'radio');
+    for (const [key, name, q] of ARCHIVE_SETS.slice(0, 2)) h += section(name, lazy(cached('ia2:' + key, () => archive.search(q, { rows: 20 })), (l) => shelf(l.map(card).join(''))), '#archive/' + key, 'archive');
     view.innerHTML = h;
+    view.dataset.filter = cat;
+    fillTileArt();
+    $$('[data-cat-chip]', view).forEach((b) => b.onclick = () => {
+      const v = b.dataset.catChip === view.dataset.filter ? 'all' : b.dataset.catChip;
+      try { sessionStorage.setItem('nota:cat', v); } catch {}
+      view.dataset.filter = v;
+      $$('[data-cat-chip]', view).forEach((x) => x.classList.toggle('on', x.dataset.catChip === v));
+      window.scrollTo({ top: 0 });
+    });
   },
 
-  browse() {
-    let h = head('Обзор');
-    h += `<a class="feature" href="#underground" style="margin-top:22px"><div><div class="eyebrow">Подборка</div><div class="ft">Андеграунд-рэп</div><div class="fs">Рейдж, плагг, фонк, дрилл и трэп</div></div><div class="art" data-underground-art>${img('')}</div></a>`;
-    h += section('Официальные чарты', lazy(cached('dz-chart:116', () => deezer.chart(116, 40), 6 * 3600e3), (l) => `<p class="note" style="margin:-4px 0 8px">Хип-хоп, мир · превью по 30 секунд</p>` + rowShelf(l.slice(0, 20)), skRows(4)));
-    h += section('Рэперы', `<ul class="menu"><li><a href="#rappers">${I.folder}<span>Папки рэперов A–Z</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
-    h += section('Чарты', `<ul class="menu">
-      <li><a href="#chart/week">${I.note}<span>Топ-100 недели</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
-      <li><a href="#chart/month">${I.note}<span>Топ-100 месяца</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li>
-      <li><a href="#chart/allTime">${I.note}<span>Топ-100 за всё время</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
-    h += section('Жанры', `<div class="tiles">${GENRES.map(([g, n]) => `<a class="tile" href="#genre/${encodeURIComponent(g)}" data-genre-art="${esc(g)}"><span>${esc(n)}</span></a>`).join('')}</div>`);
-    h += section('Радио со всего мира', `<ul class="menu"><li><a href="#countries">${I.globe}<span>Все страны</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`);
-    h += section('Из архивов', `<div class="tiles">${ARCHIVE_SETS.map(([k, n]) => `<a class="tile" href="#archive/${k}" data-archive-art="${k}"><span>${esc(n)}</span></a>`).join('')}</div>`);
-    view.innerHTML = h;
-    fillTileArt();
-    whenReady(cached('au-genre:Hip-Hop/Rap:week', () => audius.trending({ genre: 'Hip-Hop/Rap', time: 'week', limit: 60 })), (l) => {
-      const el = $('[data-underground-art]'); const t = l.find((x) => x.artBig);
-      if (el && t) el.insertAdjacentHTML('beforeend', `<img src="${esc(t.artBig)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`);
-    }, () => {});
-  },
+  browse() { views.search(); },
 
   chart(time = 'week') {
     const names = { week: 'Топ-100 недели', month: 'Топ-100 месяца', allTime: 'Топ-100 за всё время' };
     if (!names[time]) time = 'week';
-    view.innerHTML = backBtn('#browse') + `<h1 class="page-title">${names[time]}</h1>` +
+    view.innerHTML = backBtn('#search') + `<h1 class="page-title">${names[time]}</h1>` +
       lazy(cached('au-chart:' + time, () => audius.trending({ time, limit: 100 })), (l) => { const k = reg(l); return playActions(k) + rows(l, { key: k, showDur: true }); }, skRows(10));
   },
 
   genre(g) {
     g = decodeURIComponent(g || '');
     const time = store.get('genreTime', 'week');
-    view.innerHTML = backBtn('#browse') + `<h1 class="page-title">${esc(genreName(g))}</h1>
+    view.innerHTML = backBtn('#search') + `<h1 class="page-title">${esc(genreName(g))}</h1>
       <div class="seg">${[['week', 'Неделя'], ['month', 'Месяц'], ['allTime', 'Всё время']].map(([v, n]) => `<button class="${v === time ? 'on' : ''}" data-time="${v}">${n}</button>`).join('')}</div>` +
       lazy(cached(`au-genre:${g}:${time}`, () => audius.trending({ genre: g, time, limit: 60 })), (l) => {
         if (!l.length) return '<div class="empty"><b>Пока пусто</b>В этом жанре нет треков за выбранный период.</div>';
@@ -2021,7 +2039,7 @@ const views = {
 
   archive(key) {
     const set = ARCHIVE_SETS.find((s) => s[0] === key) || ARCHIVE_SETS[0];
-    view.innerHTML = backBtn('#browse') + `<h1 class="page-title">${esc(set[1])}</h1><p class="page-sub">Internet Archive</p>` +
+    view.innerHTML = backBtn('#search') + `<h1 class="page-title">${esc(set[1])}</h1><p class="page-sub">Internet Archive</p>` +
       lazy(cached('ia-all2:' + set[0], () => archive.search(set[2], { rows: 60, sort: set[0] === 'fresh' ? 'publicdate desc' : 'downloads desc' })), (l) => `<div class="grid">${l.map(card).join('')}</div>`, skGrid());
   },
 
@@ -2035,7 +2053,7 @@ const views = {
       let h = `<div class="artist-head">${coverImg}<a class="back" href="#" data-back>${I.back}</a>
         <div class="who"><div class="avatar">${img(a.avatar, true)}</div><div><h1>${esc(a.name)}${a.verified ? I.check.replace('<svg', '<svg class="verified"') : ''}</h1>
         <p>${[a.followers ? fmtCount(a.followers) + ' подписчиков' : '', a.location].filter(Boolean).map(esc).join(' · ')}</p></div></div></div>`;
-      h += tracks.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" id="followBtn">${following ? I.following + 'В медиатеке' : I.follow + 'Подписаться'}</button></div>` : '';
+      h += tracks.length ? playActions(k, `<button class="pill" id="followBtn">${following ? 'Вы подписаны' : 'Подписаться'}</button>`) : '';
       h += tracks.length ? section('Популярные треки', rows(tracks.slice(0, 5), { key: k, showDur: true })) : '<div class="empty"><b>Треков пока нет</b></div>';
       h += lazy(cached('au-ualbums:' + id, () => audius.artistLists(id, 'albums')), (l) => l.length ? section('Альбомы', shelf(l.map(card).join(''))) : '', '');
       if (tracks.length > 5) h += section('Все треки', rows(tracks.slice(5), { key: reg(tracks.slice(5)), showDur: true }));
@@ -2043,7 +2061,7 @@ const views = {
       if (a.bio) h += section('Об артисте', `<p class="desc" style="margin-top:0;-webkit-line-clamp:8">${esc(a.bio)}</p>`);
       view.innerHTML = h;
       const fb = $('#followBtn');
-      if (fb) fb.onclick = () => { lib.toggleArtist(a); const on = lib.isFollowing(a.id); fb.innerHTML = on ? I.following + 'В медиатеке' : I.follow + 'Подписаться'; };
+      if (fb) fb.onclick = () => { lib.toggleArtist(a); fb.textContent = lib.isFollowing(a.id) ? 'Вы подписаны' : 'Подписаться'; };
       markPlaying();
     }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть артиста.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
@@ -2121,14 +2139,14 @@ const views = {
     if (arg === 'liked') {
       const l = lib.liked;
       const k = reg(l);
-      view.innerHTML = backBtn('#library') + `<h1 class="page-title">Избранное</h1>` +
-        (l.length ? playActions(k) + rows(l, { key: k }) : `<div class="empty"><b>Пока пусто</b>Нажмите на сердечко в плеере, чтобы сохранить трек здесь.</div>`);
+      view.innerHTML = backBtn('#library') + `<div class="hero liked-hero"><div class="art"><span class="liked-art">${I.heartOn}</span></div><div><h1>Любимые треки</h1><div class="info">${tracksWord(l.length)}</div></div></div>` +
+        (l.length ? playActions(k) + rows(l, { key: k }) : `<div class="empty"><b>Пока пусто</b>Нажмите на плюс в плеере, чтобы сохранить трек здесь.</div>`);
       return;
     }
     if (arg === 'artists') {
       const l = lib.artists;
       view.innerHTML = backBtn('#library') + `<h1 class="page-title">Артисты</h1>` +
-        (l.length ? `<div class="grid">${l.map((a) => card({ kind: 'artist', id: a.id, name: a.name, avatar: a.avatar })).join('')}</div>` : `<div class="empty"><b>Нет артистов</b>Откройте страницу артиста и нажмите «Подписаться».<br><a class="btn slim" href="#browse">Перейти в обзор</a></div>`);
+        (l.length ? `<div class="grid">${l.map((a) => card({ kind: 'artist', id: a.id, name: a.name, avatar: a.avatar })).join('')}</div>` : `<div class="empty"><b>Нет артистов</b>Откройте страницу артиста и нажмите «Подписаться».<br><a class="btn slim" href="#search">Перейти в обзор</a></div>`);
       return;
     }
     if (arg === 'stations') {
@@ -2138,18 +2156,28 @@ const views = {
       return;
     }
     if (arg === 'files') { location.replace('#mine'); return; }
-    const chev = I.chev.replace('<svg', '<svg class="chev"');
-    view.innerHTML = head('Медиатека') + `
-      <ul class="menu">
-        <li><a href="#library/liked">${I.heartOn}<span>Избранное</span><span class="cnt">${lib.liked.length || ''}</span>${chev}</a></li>
-        <li><a href="#library/artists">${I.person}<span>Артисты</span><span class="cnt">${lib.artists.length || ''}</span>${chev}</a></li>
-        <li><a href="#library/stations">${I.radio}<span>Мои станции</span><span class="cnt">${lib.stations.length || ''}</span>${chev}</a></li>
-        <li><a href="#mine">${I.folder}<span>Моя музыка</span>${chev}</a></li>
-        <li><a href="#settings">${I.gear}<span>Настройки</span>${chev}</a></li>
-      </ul>` +
-      section('Плейлисты', `<div class="grid"><button class="card" id="newPl"><div class="art"><div class="ph" style="color:var(--accent)">${I.plus}</div></div><span class="t1">Новый плейлист</span><span class="t2">&nbsp;</span></button>${lib.playlists.map(playlistCard).join('')}</div>`) +
-      (lib.recent.length ? section('Недавно играло', rows(lib.recent.slice(0, 20))) : '');
+    const kind = store.get('libKind', 'all');
+    const sk = reg(lib.stations);
+    const chips = [['playlist', 'Плейлисты'], ['artist', 'Артисты'], ['station', 'Станции'], ['file', 'Файлы']];
+    const item = (k, href, art, title, sub, round) => `<li class="lib-row" data-kind="${k}"><a href="${href}"><span class="la${round ? ' round' : ''}">${art}</span><span class="meta"><b>${esc(title)}</b><small>${sub}</small></span></a></li>`;
+    const items = [
+      item('playlist', '#library/liked', `<span class="liked-art">${I.heartOn}</span>`, 'Любимые треки', `<span class="pin">${I.pin || ''}</span>Плейлист · ${tracksWord(lib.liked.length)}`),
+      item('file', '#mine', `<span class="file-art">${I.folder}</span>`, 'Моя музыка', 'Файлы на этом устройстве'),
+      ...lib.playlists.map((p) => item('playlist', '#playlist/' + p.id, mosaic(p.tracks), p.name, 'Плейлист · ' + tracksWord(p.tracks.length))),
+      ...lib.artists.map((a) => item('artist', a.dz ? '#dz/' + a.id : '#artist/' + a.id, img(a.avatar, true), a.name, 'Артист', true)),
+      ...lib.stations.map((t, i) => `<li class="lib-row" data-kind="station"><button data-play="${sk}" data-i="${i}"><span class="la">${img(t.art, false, '', '64px', t.title)}</span><span class="meta"><b>${esc(t.title)}</b><small>Радиостанция</small></span></button></li>`),
+      item('settings', '#settings', `<span class="file-art">${I.gear}</span>`, 'Настройки', 'Оформление, звук, текст песен'),
+    ];
+    view.innerHTML = head('Медиатека', `<button class="head-btn" id="newPl" aria-label="Новый плейлист">${I.plus}</button>`) +
+      `<div class="chips lib-chips">${chips.map(([v, n]) => `<button class="chip${v === kind ? ' on' : ''}" data-kind-chip="${v}">${n}</button>`).join('')}</div>
+      <p class="lib-sort">Недавние</p><ul class="lib-list" data-kind-filter="${kind}">${items.join('')}</ul>`;
     $('#newPl').onclick = () => playlistForm();
+    $$('[data-kind-chip]', view).forEach((b) => b.onclick = () => {
+      const v = b.dataset.kindChip === store.get('libKind', 'all') ? 'all' : b.dataset.kindChip;
+      store.set('libKind', v);
+      $('.lib-list').dataset.kindFilter = v;
+      $$('[data-kind-chip]', view).forEach((x) => x.classList.toggle('on', x.dataset.kindChip === v));
+    });
   },
 
   async mine() {
@@ -2203,7 +2231,7 @@ const views = {
 
   underground() {
     const lists = [['rage', 'Рейдж'], ['plugg', 'Плагг'], ['underground rap', 'Андеграунд'], ['phonk', 'Фонк'], ['drill', 'Дрилл'], ['emo rap', 'Эмо-рэп']];
-    let h = backBtn('#browse') + `<h1 class="page-title">Андеграунд-рэп</h1><p class="page-sub">Независимые рэперы, которые сами выкладывают свою музыку</p>
+    let h = backBtn('#search') + `<h1 class="page-title">Андеграунд-рэп</h1><p class="page-sub">Независимые рэперы, которые сами выкладывают свою музыку</p>
       <ul class="menu"><li><a href="#rappers">${I.folder}<span>Все рэперы: папки A–Z</span>${I.chev.replace('<svg', '<svg class="chev"')}</a></li></ul>`;
     h += lazy(cached('au-genre:Hip-Hop/Rap:week', () => audius.trending({ genre: 'Hip-Hop/Rap', time: 'week', limit: 60 })), (l) => { const k = reg(l); return playActions(k) + section('Хип-хоп: хиты недели', rows(l.slice(0, 10), { key: k, showDur: true }), '#genre/' + encodeURIComponent('Hip-Hop/Rap')) + section('Рэперы недели', shelf(artistsOf(l, 14).map(card).join(''), 'small')); }, skRows(6));
     h += section('Трэп', lazy(cached('au-genre:Trap:week', () => audius.trending({ genre: 'Trap', time: 'week', limit: 60 })), (l) => rowShelf(l.slice(0, 16)), skRows(4)), '#genre/Trap');
@@ -2212,7 +2240,7 @@ const views = {
   },
 
   rappers() {
-    view.innerHTML = backBtn('#browse') + `<h1 class="page-title">Рэперы</h1>
+    view.innerHTML = backBtn('#search') + `<h1 class="page-title">Рэперы</h1>
       <div class="search-bar"><label class="field">${I.search}<input id="rq" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Найти рэпера"></label></div>
       <div id="rapList">${skRows(10)}</div>`;
     whenReady(rapIndex(), (list) => {
@@ -2246,7 +2274,7 @@ const views = {
       const k = reg(a.top);
       let h = `<div class="artist-head"><img class="cover" src="${esc(a.avatarBig || a.avatar)}" alt="" referrerpolicy="no-referrer"><a class="back" href="#" data-back>${I.back}</a>
         <div class="who"><div><h1>${esc(a.name)}</h1><p>${a.fans ? fmtCount(a.fans) + ' поклонников · ' : ''}официальный каталог</p></div></div></div>`;
-      h += a.top.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` : '';
+      h += a.top.length ? playActions(k) : '';
       if (a.top.length) h += section('Популярные треки', rows(a.top.slice(0, 10), { key: k }));
       if (a.albums.length) h += section('Альбомы', shelf(a.albums.map(card).join('')));
       if (a.singles.length) h += section('Синглы и EP', shelf(a.singles.map(card).join('')));
@@ -2264,7 +2292,7 @@ const views = {
       view.innerHTML = backBtn() + `<div class="hero"><div class="art">${img(a.artBig || a.art, false, '', undefined, a.title)}</div><div>
         <h1>${esc(a.title)}</h1><a class="by" href="#dz/${a.dzArtist}">${esc(a.artist)}</a>
         <div class="info">${[{ album: 'Альбом', single: 'Сингл', ep: 'EP', compile: 'Сборник' }[a.type] || 'Альбом', a.year].filter(Boolean).join(' · ')}</div></div></div>` +
-        (a.tracks.length ? `<div class="actions"><button class="btn solid" data-play="${k}" data-i="0">${I.play}Слушать</button><button class="btn" data-shuffle="${k}">${I.shuffle}Перемешать</button></div>` + rows(a.tracks, { key: k, numbered: true, sub: () => '' }) : '<div class="empty"><b>Превью недоступны</b></div>') +
+        (a.tracks.length ? playActions(k) + rows(a.tracks, { key: k, numbered: true, sub: () => '' }) : '<div class="empty"><b>Превью недоступны</b></div>') +
         `<p class="foot">${tracksWord(a.tracks.length)}${a.total ? ', ' + fmtLong(a.total) : ''}${a.label ? '<br>' + esc(a.label) : ''}<br>Официальные превью по 30 секунд, данные Deezer</p>`;
       markPlaying();
     }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть альбом.<button class="text-btn" data-retry>Повторить</button></p>`; });
@@ -2288,7 +2316,7 @@ const views = {
     const q0 = (() => { try { return sessionStorage.getItem('nota:q') || ''; } catch { return ''; } })();
     const tab0 = store.get('searchTab', 'all');
     view.innerHTML = head('Поиск') + `
-      <div class="search-bar"><label class="field">${I.search}<input id="q" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Артисты, треки, альбомы, радио" value="${esc(q0)}"><button class="clear" id="qClear" aria-label="Очистить" ${q0 ? '' : 'hidden'}>${I.x}</button></label></div>
+      <div class="search-bar"><label class="field">${I.search}<input id="q" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Что хочешь послушать?" value="${esc(q0)}"><button class="clear" id="qClear" aria-label="Очистить" ${q0 ? '' : 'hidden'}>${I.x}</button></label></div>
       <div class="seg" id="sTabs">${[['all', 'Всё'], ['artists', 'Артисты'], ['tracks', 'Треки'], ['albums', 'Альбомы'], ['radio', 'Радио']].map(([v, n]) => `<button data-stab="${v}" class="${v === tab0 ? 'on' : ''}">${n}</button>`).join('')}</div>
       <div id="results"></div>`;
     const input = $('#q');
@@ -2449,7 +2477,7 @@ function setSkin(pref) {
   const k = pref === 'auto' ? (darkMQ.matches ? 'classic' : 'noir') : pref;
   document.documentElement.dataset.skin = k;
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = { noir: '#050506', classic: '#ffffff', aurora: '#0a0714' }[k] || '#050506';
+  if (meta) meta.content = { noir: '#121212', classic: '#ffffff', aurora: '#0a0714' }[k] || '#050506';
 }
 darkMQ.addEventListener('change', () => { if (store.get('skin', 'noir') === 'auto') setSkin('auto'); });
 function mosaic(tracks) {
@@ -2495,7 +2523,7 @@ async function doSearch(q, commit) {
   $('#sTabs').hidden = !q;
   if (!q) {
     out.innerHTML = (lib.searches.length ? section('Недавние запросы', `<ul class="menu">${lib.searches.map((s) => `<li><button data-recent="${esc(s)}" style="color:var(--fg)">${I.search}<span>${esc(s)}</span></button></li>`).join('')}</ul>`) : '') +
-      section('Жанры', `<div class="tiles">${GENRES.slice(0, 12).map(([g, n]) => `<a class="tile" href="#genre/${encodeURIComponent(g)}" data-genre-art="${esc(g)}"><span>${esc(n)}</span></a>`).join('')}</div>`);
+      browseTiles();
     $$('[data-recent]', out).forEach((b) => b.onclick = () => { $('#q').value = b.dataset.recent; $('#qClear').hidden = false; doSearch(b.dataset.recent, true); });
     fillTileArt();
     return;
@@ -2623,7 +2651,7 @@ function route() {
   const [name, ...rest] = h.split('/');
   const arg = rest.join('/');
   const fn = views[name] || views.home;
-  const tab = { dz: null, dza: null, rappers: 'browse', chart: 'browse', genre: 'browse', archive: 'browse', underground: 'browse', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
+  const tab = { dz: null, dza: null, browse: 'search', rappers: 'search', chart: 'search', genre: 'search', archive: 'search', underground: 'search', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
   const active = tab === undefined ? (views[name] ? name : 'home') : tab;
   if (active !== null) {
     const tabs = $$('.tabs a[data-tab]'), ti = $$('.tab-group a[data-tab]').findIndex((a) => a.dataset.tab === active);
@@ -2633,7 +2661,7 @@ function route() {
     $('.tabs').classList.toggle('no-tab', ti < 0);
   }
   for (const k in ctx) if (k !== 'queue') delete ctx[k];
-  view.classList.remove('has-tint'); delete view.dataset.tintFor;
+  view.classList.remove('has-tint'); delete view.dataset.tintFor; delete view.dataset.filter;
   fn(arg);
   window.scrollTo(0, 0);
   /* the new screen comes in from the right when going deeper, from the left when going back, and softly between tabs */
