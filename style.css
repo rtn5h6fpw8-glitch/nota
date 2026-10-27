@@ -1094,3 +1094,116 @@ html.no-karaoke .player.lyrics-on .lyr-line.on, html.no-karaoke .player.lyrics-o
 .sheet { background: linear-gradient(180deg, rgba(255, 255, 255, .06), transparent 40%), rgba(40, 40, 40, .84) !important; border-radius: 14px 14px 0 0; }
 .toast { background: rgba(240, 240, 240, .95) !important; color: #121212 !important; font-weight: 700; }
 .qt-art.liked { width: 56px; height: 56px; flex: none; }
+
+/* ================================================================
+   v43 · Spotify for iOS 26, liquid glass, matched to the reference video
+   ================================================================ */
+/* glass: a light veil with a bright rim on top, the content behind shows through softly */
+@media (max-width: 899px) {
+  html .tab-group.lg-glass, html .mini.lg-glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .06) 55%, rgba(255, 255, 255, .09)), rgba(36, 36, 36, .5) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(180%) !important; backdrop-filter: blur(18px) saturate(180%) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .34), inset 0 -1px 0 rgba(255, 255, 255, .07), inset 0 0 0 1px rgba(255, 255, 255, .09), 0 12px 30px rgba(0, 0, 0, .5) !important;
+  }
+  .tab-group { border-radius: 32px; }
+  .tab-group a { color: #fff; font-size: 10.5px; font-weight: 700; }
+  .tab-group a.on { color: var(--accent); }
+  .tab-group a svg { width: 24px; height: 24px; }
+  .tab-drop { top: 6px; bottom: 6px; border-radius: 26px; background: rgba(255, 255, 255, .15); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 0 0 1px rgba(255, 255, 255, .06); }
+  html .mini.lg-glass { height: 58px; border-radius: 29px; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px); padding: 0 8px 0 8px; }
+  html[data-skin="classic"] .tab-group a { color: #101012; }
+  html[data-skin="classic"] .tab-group a.on { color: var(--accent); }
+}
+body::after { height: 130px; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 60%, transparent) 60%, color-mix(in srgb, var(--bg) 85%, transparent)); }
+
+/* mini player: cover, title, tick, play */
+.mini-art { width: 42px; height: 42px; border-radius: 10px; }
+.mini .mini-progress { display: none; }
+#miniLike svg { width: 24px; height: 24px; }
+#miniLike.on { color: var(--accent); }
+#miniPlay svg { width: 26px; height: 26px; }
+.mini .ctl { width: 42px; height: 42px; }
+
+/* home: big colour cards, then glass pills */
+.shelf.feat { grid-auto-columns: min(76vw, 310px); gap: 12px; margin-top: 16px; }
+.feat-card { position: relative; display: block; height: 170px; border-radius: 18px; overflow: hidden; background: var(--tint, #3a3a3a); transition: background-color .6s ease, transform .45s cubic-bezier(.3, 1.5, .5, 1); scroll-snap-align: start; isolation: isolate; }
+.feat-card.sk { background: var(--surface); }
+.feat-card:active { transform: scale(.97); }
+.fc-art { position: absolute; top: 0; right: 0; bottom: 0; width: 64%; -webkit-mask-image: linear-gradient(to right, transparent 0, #000 42%); mask-image: linear-gradient(to right, transparent 0, #000 42%); }
+.fc-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.fc-art .ph { border-radius: 0; }
+.fc-text { position: absolute; left: 16px; right: 34%; bottom: 14px; z-index: 1; display: flex; flex-direction: column; gap: 3px; color: #fff; }
+.fc-text b { font-size: 19px; font-weight: 800; line-height: 1.12; letter-spacing: -.015em; text-transform: uppercase; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.fc-text small { font-size: 13px; font-weight: 600; opacity: .82; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick { gap: 8px; margin-top: 16px; }
+.qt { height: 48px; border-radius: 24px; padding: 4px; gap: 9px; background: linear-gradient(180deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .08)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), inset 0 0 0 1px rgba(255, 255, 255, .06); }
+.qt:active { background: linear-gradient(180deg, rgba(255, 255, 255, .24), rgba(255, 255, 255, .12)); }
+.qt-art, .qt-art.liked { width: 40px; height: 40px; border-radius: 10px; }
+.qt-art.liked svg { width: 18px; height: 18px; }
+.qt b { font-size: 12.5px; font-weight: 700; padding-right: 4px; }
+.qt .eq { display: none; margin: 0 12px 0 auto; flex: none; }
+.qt.playing { background: linear-gradient(180deg, color-mix(in srgb, var(--tint, #6b6420) 70%, rgba(255, 255, 255, .35)), color-mix(in srgb, var(--tint, #6b6420) 85%, transparent)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 0 0 1px rgba(255, 255, 255, .12); }
+.qt.playing .eq { display: inline-flex; }
+html[data-skin="classic"] .qt { background: rgba(0, 0, 0, .06); }
+
+/* album and playlist pages: the blurred cover behind the top, everything centred, white Play pill */
+#view::before { left: -60px; right: -60px; top: -40px; height: 560px; background: linear-gradient(180deg, rgba(18, 18, 18, .05) 0, rgba(18, 18, 18, .35) 55%, var(--bg) 100%), var(--page-img, none) center 35% / cover; filter: blur(36px) saturate(1.5); }
+#view.has-tint::before { opacity: .85; }
+.hero { text-align: center; }
+.hero h1 { text-align: center; font-size: 26px; margin-top: 20px; }
+.hero .by, .hero .info { display: block; text-align: center; }
+.sp-actions { justify-content: center; gap: 22px; margin: 18px 0 14px; }
+.glass-circle { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: linear-gradient(180deg, rgba(255, 255, 255, .2), rgba(255, 255, 255, .08)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 0 0 1px rgba(255, 255, 255, .08); transition: transform .45s cubic-bezier(.3, 1.5, .5, 1), color .2s ease; }
+.glass-circle svg { width: 22px; height: 22px; }
+.glass-circle.on { color: var(--accent); }
+.glass-circle:active { transform: scale(.9); }
+.play-pill { display: inline-flex; align-items: center; gap: 8px; height: 48px; padding: 0 30px; border-radius: 24px; background: #fff; color: #000; font-size: 16px; font-weight: 800; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); transition: transform .45s cubic-bezier(.3, 1.5, .5, 1); }
+.play-pill svg { width: 18px; height: 18px; }
+.play-pill:active { transform: scale(.94); }
+html[data-skin="classic"] .glass-circle { color: #101012; background: rgba(0, 0, 0, .06); }
+html[data-skin="classic"] .play-pill { background: #101012; color: #fff; }
+
+/* player: the blurred cover is the background */
+.player-bg { background: #262626 !important; }
+#pbg { position: absolute; left: -12%; top: -12%; width: 124%; height: 124%; opacity: 0; transition: opacity .6s ease; }
+.player-bg.ready #pbg { opacity: 1; }
+.player-bg::after { display: block; content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, .12), rgba(0, 0, 0, .22) 55%, rgba(0, 0, 0, .42)); }
+.p-head .grabber, .p-head .now-btn { width: 36px !important; height: 36px !important; border-radius: 50%; background: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .1)) !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32) !important; }
+.p-head .grabber svg { width: 22px; height: 22px; }
+.p-head .now-btn svg { width: 20px; height: 20px; }
+.p-ctx small { display: none; }
+.p-ctx b { font-size: 13px; font-weight: 700; opacity: .9; }
+.stage { border-radius: 10px; margin-top: 30px; box-shadow: 0 18px 50px rgba(0, 0, 0, .35); }
+.now-thumb { display: none; }
+.now h2 { font-size: 24px; font-weight: 800; }
+.now-artist { font-size: 15px; font-weight: 600; color: rgba(255, 255, 255, .78); }
+#bigLike { color: #fff; }
+#bigLike.on { color: var(--accent); }
+.seek-track { background: rgba(255, 255, 255, .32); }
+#play { background: none; width: 76px; height: 76px; color: #fff; }
+#play svg { width: 46px; height: 46px; }
+#prev svg, #next svg { width: 38px; height: 38px; }
+.ctl.side svg { width: 24px; height: 24px; }
+.p-bottom { justify-content: space-between; }
+.pb { color: #fff; }
+.lyr-card { background: linear-gradient(180deg, rgba(255, 255, 255, .2), rgba(255, 255, 255, .1)) !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 0 0 1px rgba(255, 255, 255, .08); }
+.lc-body p { color: rgba(255, 255, 255, .45); }
+.lc-body p.on { color: #fff; }
+.lc-head span { background: rgba(255, 255, 255, .2); }
+
+/* lyrics: small cover and title on top, big white lines over the blurred cover */
+.player.lyrics-on .player-bg { background: #262626 !important; }
+.player.lyrics-on .p-head { order: -2; }
+.player.lyrics-on .now { order: -1; margin-top: 10px; gap: 12px; }
+.player.lyrics-on .now-thumb { display: block; width: 50px; height: 50px; border-radius: 6px; object-fit: cover; flex: none; box-shadow: 0 6px 16px rgba(0, 0, 0, .3); }
+.player.lyrics-on .now h2 { font-size: 17px; }
+.player.lyrics-on .now-artist { font-size: 14px; }
+.player.lyrics-on .lyrics { aspect-ratio: auto; height: max(320px, calc(100dvh - 400px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); margin-top: 0; }
+.player.lyrics-on .lyr-line { color: rgba(255, 255, 255, .4); font-size: 28px; font-weight: 800; }
+.player.lyrics-on .lyr-line.past { color: rgba(255, 255, 255, .55); }
+.player.lyrics-on .lyr-line.on .w { background-image: linear-gradient(90deg, #fff 0, #fff calc(var(--p) * 100%), rgba(255, 255, 255, .4) calc(var(--p) * 100% + .5px)); }
+.player.lyrics-on .lyr-line.on .w.bg { background-image: linear-gradient(90deg, rgba(255, 255, 255, .85) 0, rgba(255, 255, 255, .85) calc(var(--p) * 100%), rgba(255, 255, 255, .3) calc(var(--p) * 100% + .5px)); }
+.player.lyrics-on .lyr-off button { background: rgba(255, 255, 255, .18); }
+#pbg { filter: blur(16px); }
+.player-bg::after { background: linear-gradient(180deg, rgba(0, 0, 0, .18), rgba(0, 0, 0, .3) 55%, rgba(0, 0, 0, .5)); }
+.player.lyrics-on .player-bg::after { background: rgba(0, 0, 0, .38); }

@@ -33,7 +33,7 @@
   <a href="#home" data-tab="home"><svg viewBox="0 0 24 24"><path d="M12 3.2 3 10v10.3c0 .4.3.7.7.7H9v-6.5h6V21h5.3c.4 0 .7-.3.7-.7V10z"/></svg><span>Главная</span></a>
   <a href="#search" data-tab="search"><svg viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 0 1 6 12l4.8 4.8-1.5 1.5-4.8-4.8A7.5 7.5 0 1 1 10.5 3zm0 2.1a5.4 5.4 0 1 0 0 10.8 5.4 5.4 0 0 0 0-10.8z"/></svg><span>Поиск</span></a>
   <a href="#library" data-tab="library"><svg viewBox="0 0 24 24"><path d="M4 3.5h2.2v17H4zm4.4 0h2.2v17H8.4zm4.6.9 2.1-.7 5.4 16.2-2.1.7z"/></svg><span>Медиатека</span></a>
-  <a href="#radio" data-tab="radio"><svg viewBox="0 0 24 24"><path d="M12 9.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8zM7 6.2l1.4 1.4a6.2 6.2 0 0 0 0 8.8L7 17.8a8.2 8.2 0 0 1 0-11.6zm10 0a8.2 8.2 0 0 1 0 11.6l-1.4-1.4a6.2 6.2 0 0 0 0-8.8zM4.2 3.4l1.4 1.4a10.2 10.2 0 0 0 0 14.4l-1.4 1.4a12.2 12.2 0 0 1 0-17.2zm15.6 0a12.2 12.2 0 0 1 0 17.2l-1.4-1.4a10.2 10.2 0 0 0 0-14.4z"/></svg><span>Радио</span></a>
+  <a href="#create" data-tab="create" class="tab-create"><svg viewBox="0 0 24 24"><path d="M11 3.5h2v7.5h7.5v2H13v7.5h-2V13H3.5v-2H11z"/></svg><span>Создать</span></a>
   </div>
 </nav>
 
@@ -45,13 +45,14 @@
     <span class="mini-art"><img id="miniArt" alt="" onload="this.classList.add('in')"></span>
     <span class="mini-text"><b id="miniTitle"></b><small id="miniArtist"></small><small id="miniLyric" class="mini-lyric" hidden></small></span>
   </button>
+  <button class="ctl" id="miniLike" aria-label="В избранное"></button>
   <button class="ctl" id="miniPlay" aria-label="Играть"></button>
-  <button class="ctl" id="miniNext" aria-label="Следующий"><svg viewBox="0 0 24 24"><path d="M3.5 5.6v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L5 4.9c-.6-.5-1.5-.1-1.5.7zm9 0v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L14 4.9c-.6-.5-1.5-.1-1.5.7z"/></svg></button>
+  <button class="ctl" id="miniNext" aria-label="Следующий" hidden><svg viewBox="0 0 24 24"><path d="M3.5 5.6v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L5 4.9c-.6-.5-1.5-.1-1.5.7zm9 0v12.8c0 .8.9 1.2 1.5.7l7.6-6.4c.4-.4.4-1 0-1.4L14 4.9c-.6-.5-1.5-.1-1.5.7z"/></svg></button>
   <div class="mini-progress"><i id="miniBar"></i></div>
 </div>
 
 <section class="player" id="player" hidden aria-label="Сейчас играет">
-  <div class="player-bg" id="playerBg"></div>
+  <div class="player-bg" id="playerBg"><canvas id="pbg" width="32" height="32"></canvas></div>
   <div class="player-inner">
     <div class="p-head">
       <button class="grabber" id="playerClose" aria-label="Свернуть плеер"><svg viewBox="0 0 24 24"><path d="M4.6 8.4 6 7l6 6 6-6 1.4 1.4L12 15.8z"/></svg></button>
@@ -61,6 +62,7 @@
     <div class="stage" id="stage"><img id="bigArt" alt="" onload="this.classList.add('in')"></div>
     <div class="lyrics" id="lyrics" hidden><div class="lyr-inner" id="lyrInner"></div></div>
     <div class="now">
+      <img class="now-thumb" id="nowThumb" alt="">
       <div class="now-text"><h2 id="bigTitle"></h2><button id="bigArtist" class="now-artist"></button></div>
       <button class="now-btn" id="bigLike" aria-label="В избранное"></button>
     </div>

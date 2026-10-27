@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '42 · 24.10.2026';
+const APP_VERSION = '43 · 27.10.2026';
 
 /* ======================= helpers ======================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1432,6 +1432,7 @@ function renderNow() {
   $('#bigArtist').textContent = t.artist || '';
   $('#bigArtist').disabled = !t.artistId && !t.albumId && !t.dzArtist;
   paintBg(art);
+  $('#nowThumb').src = art;
   $('#pCtx').textContent = t.album || (t.live ? 'Радио' : t.preview ? 'Превью 30 секунд' : t.artist || '');
 
   $('#seek').classList.toggle('disabled', !!t.live);
@@ -1452,6 +1453,16 @@ const hslParts = (c) => (String(c).match(/hsl\((\d+) (\d+)% (\d+)%\)/) || [0, 0,
 function paintBg(src) {
   if (src === bgFor) return;
   bgFor = src;
+  const im = new Image();
+  im.referrerPolicy = 'no-referrer';
+  im.onload = () => {
+    if (bgFor !== src) return;
+    const x = $('#pbg').getContext('2d');
+    x.filter = 'saturate(1.5)';
+    x.clearRect(0, 0, 32, 32); x.drawImage(im, -2, -2, 36, 36);
+    $('#playerBg').classList.add('ready');
+  };
+  im.src = src;
   tintOf(src).then((c) => {
     if (bgFor !== src) return;
     const [h, sat] = hslParts(c), s2 = Math.max(28, Math.min(62, sat + 8));
@@ -1524,9 +1535,9 @@ function refreshLike() {
   if (!t) return;
   const st = t.src === 'radio';
   const on = st ? lib.isSaved(t.id) : lib.isLiked(t.id);
-  const b = $('#bigLike');
-  b.innerHTML = on ? I.added : I.add;
-  b.classList.toggle('on', on);
+  const b = $('#bigLike'), mb = $('#miniLike');
+  b.innerHTML = mb.innerHTML = on ? I.added : I.add;
+  b.classList.toggle('on', on); mb.classList.toggle('on', on);
   b.setAttribute('aria-label', st ? (on ? 'Удалить станцию' : 'Сохранить станцию') : on ? 'Удалить из избранного' : 'В избранное');
 }
 function renderQueue() {
@@ -1537,7 +1548,7 @@ function renderQueue() {
 }
 function markPlaying() {
   const id = P.cur && P.cur.id;
-  $$('#view .row[data-id]').forEach((el) => el.classList.toggle('playing', el.dataset.id === id));
+  $$('#view .row[data-id], #view .qt[data-id]').forEach((el) => el.classList.toggle('playing', el.dataset.id === id));
 }
 
 const pop = (el) => { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); };
@@ -1605,6 +1616,7 @@ $('#bigLike').onclick = (e) => {
   b.classList.remove('burst');
   if (b.classList.contains('on')) { void b.offsetWidth; b.classList.add('burst'); }
 };
+$('#miniLike').onclick = (e) => { e.stopPropagation(); const t = P.cur; if (!t) return; t.src === 'radio' ? lib.toggleStation(t) : lib.toggleLike(t); refreshLike(); pop(e.currentTarget); };
 $('#bigMore').onclick = () => P.cur && trackSheet(P.cur, {});
 $('#bigArtist').onclick = () => {
   const t = P.cur;
@@ -1822,7 +1834,7 @@ function mixCard(g, n, i) {
 }
 /* the start of Search: bright category tiles with a tilted cover in the corner */
 function browseTiles() {
-  const items = [['#chart/week', 'Топ-100 недели', 'Electronic'], ['#underground', 'Андеграунд-рэп', 'Hip-Hop/Rap'], ['#rappers', 'Рэперы A–Z', 'Trap'], ['#countries', 'Радио мира', '']]
+  const items = [['#radio', 'Радио', 'Lo-Fi'], ['#chart/week', 'Топ-100 недели', 'Electronic'], ['#underground', 'Андеграунд-рэп', 'Hip-Hop/Rap'], ['#rappers', 'Рэперы A–Z', 'Trap'], ['#countries', 'Радио мира', '']]
     .concat(GENRES.map(([g, n]) => ['#genre/' + encodeURIComponent(g), n, g]));
   const arch = ARCHIVE_SETS.map(([k, n]) => `<a class="tile sp" href="#archive/${k}" style="--c:${PALETTE[(k.length * 7) % PALETTE.length]}" data-archive-art="${k}"><span>${esc(n)}</span></a>`);
   return section('Начни просматривать', `<div class="tiles sp">${items.map(([href, n, g], i) => `<a class="tile sp" href="${href}" style="--c:${PALETTE[i % PALETTE.length]}"${g ? ` data-genre-art="${esc(g)}"` : ''}><span>${esc(n)}</span></a>`).join('')}</div>`) +
@@ -1862,6 +1874,7 @@ function pageTint() {
   const im = view.querySelector('.hero .art img, .artist-head img');
   if (!im || !im.getAttribute('src') || view.dataset.tintFor === im.getAttribute('src')) return;
   const src = im.getAttribute('src'); view.dataset.tintFor = src;
+  view.style.setProperty('--page-img', `url("${src.replace(/"/g, '%22')}")`);
   tintOf(src).then((c) => { if (view.dataset.tintFor === src) { view.style.setProperty('--page-tint', c); view.classList.add('has-tint'); } });
 }
 /* any screen that redraws itself later gets its colours too */
@@ -1897,7 +1910,7 @@ function lazy(promise, render, skel = skShelf()) {
   return `<div id="${id}">${skel}</div>`;
 }
 const backBtn = (href) => `<div class="topbar"><a class="back" href="${href || '#'}" ${href ? '' : 'data-back'}>${I.back}Назад</a></div>`;
-const playActions = (k, left = '') => `<div class="sp-actions"><div class="sp-left">${left}</div><button class="ic-btn" data-shuffle="${k}" aria-label="Перемешать">${I.shuffle}</button><button class="fab" data-play="${k}" data-i="0" aria-label="Слушать">${I.play}</button></div>`;
+const playActions = (k, extra = '') => `<div class="sp-actions"><button class="glass-circle" data-shuffle="${k}" aria-label="Перемешать">${I.shuffle}</button><button class="play-pill" data-play="${k}" data-i="0">${I.play}<span>Слушать</span></button>${extra || `<button class="glass-circle" data-more-list="${k}" aria-label="Ещё">${I.more}</button>`}</div>`;
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 
 document.addEventListener('click', (e) => {
@@ -1914,6 +1927,15 @@ document.addEventListener('click', (e) => {
     const list = ctx[mo.dataset.more];
     const t = list && list[+mo.dataset.i];
     if (t) trackSheet(t, { playlistId: mo.closest('[data-playlist]')?.dataset.playlist, q: mo.dataset.q != null ? +mo.dataset.q : undefined, fileView: !!mo.closest('[data-files]') });
+    return;
+  }
+  const ml = el.closest('[data-more-list]');
+  if (ml) {
+    const l = ctx[ml.dataset.moreList];
+    if (l && l.length) openSheet('<h3>Весь список</h3>', acts([
+      { label: 'Слушать следующими', icon: I.next || I.plus, fn: () => { l.slice().reverse().forEach((t) => P.playNext(t)); toast('Сыграют следующими'); } },
+      { label: 'В конец очереди', icon: I.plus, fn: () => { l.forEach((t) => P.addToQueue(t)); toast('Добавлено в очередь'); } },
+    ]));
     return;
   }
   const sh = el.closest('[data-shuffle]');
@@ -1985,15 +2007,17 @@ const views = {
     const cat = (() => { try { return sessionStorage.getItem('nota:cat') || 'all'; } catch { return 'all'; } })();
     const chips = [['all', 'Всё'], ['music', 'Музыка'], ['rap', 'Рэп'], ['radio', 'Радио'], ['archive', 'Архив']];
     let h = `<div class="big-head home-head"><a class="avatar" href="#settings" aria-label="Настройки">N</a><div class="chips">${chips.map(([v, n]) => `<button class="chip${v === cat ? ' on' : ''}" data-cat-chip="${v}">${n}</button>`).join('')}</div></div>`;
-    /* quick access: favourite songs, what played recently, then albums of the week */
+    /* big colour cards on top: the albums of the week */
+    h += lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => `<div class="shelf feat" data-cat="music rap">${l.filter((a) => !lib.isHidden(a)).slice(0, 6).map((a) => `<a class="feat-card" href="${hrefOf(a)}" data-tint="${esc(a.art || '')}"><span class="fc-art">${img(a.art, false, a.artBig, '(min-width: 600px) 220px, 46vw', a.title)}</span><span class="fc-text"><b>${esc(a.title)}</b><small>${esc(a.artist || '')}</small></span></a>`).join('')}</div>`, '<div class="shelf feat"><div class="feat-card sk"></div><div class="feat-card sk"></div></div>');
+    /* quick access as glass pills: favourite songs, what played recently, then albums of the week */
     const quick = [`<a class="qt" href="#library/liked"><span class="qt-art liked">${I.heartOn}</span><b>Любимые треки</b></a>`];
     const seen = new Set();
-    recent.forEach((t, i) => { if (quick.length < 8 && !seen.has(t.id) && !lib.isHidden(t)) { seen.add(t.id); quick.push(`<button class="qt" data-play="${rk}" data-i="${i}"><span class="qt-art">${img(t.art, false, '', '56px', t.title)}</span><b>${esc(t.title)}</b></button>`); } });
+    recent.forEach((t, i) => { if (quick.length < 8 && !seen.has(t.id) && !lib.isHidden(t)) { seen.add(t.id); quick.push(`<button class="qt" data-id="${esc(t.id)}" data-tint="${esc(t.art || '')}" data-play="${rk}" data-i="${i}"><span class="qt-art">${img(t.art, false, '', '48px', t.title)}</span><b>${esc(t.title)}</b><span class="eq"><i></i><i></i><i></i></span></button>`); } });
     const need = 8 - quick.length;
-    h += `<div class="quick" data-cat="music rap">${quick.join('')}${need > 0 ? lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => l.filter((a) => !lib.isHidden(a)).slice(0, need).map((a) => `<a class="qt" href="${hrefOf(a)}"><span class="qt-art">${img(a.art, false, '', '56px', a.title)}</span><b>${esc(a.title)}</b></a>`).join(''), '') : ''}</div>`;
+    h += `<div class="quick" data-cat="music rap">${quick.join('')}${need > 0 ? lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => l.filter((a) => !lib.isHidden(a)).slice(6, 6 + need).map((a) => `<a class="qt" href="${hrefOf(a)}"><span class="qt-art">${img(a.art, false, '', '48px', a.title)}</span><b>${esc(a.title)}</b></a>`).join(''), '') : ''}</div>`;
+    if (recent.length) h += section('Недавние', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')), '', 'music rap');
     h += section('Миксы для тебя', shelf(MIXES.map(([g, n], i) => mixCard(g, n, i)).join('')), '', 'music rap');
-    if (recent.length) h += section('Недавно играло', shelf(recent.map((t, i) => playCard(t, rk, i)).join('')), '', 'music rap');
-    h += section('Альбомы недели', lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => shelf(l.filter((a) => !lib.isHidden(a)).slice(0, 16).map(card).join(''))), '', 'music');
+    h += section('Альбомы недели', lazy(cached('au-albums', () => audius.trendingLists('album')), (l) => shelf(l.filter((a) => !lib.isHidden(a)).slice(6, 22).map(card).join(''))), '', 'music');
     if (!lib.settings.fullOnly) h += section('Мировой чарт · превью', lazy(cached('dz-chart:0', () => deezer.chart(0, 40), 6 * 3600e3), (l) => (prepare(l, 6), rowShelf(l.slice(0, 20))), skRows(4)), '', 'music');
     h += section('Хиты недели', lazy(trendingWeek(), (l) => rowShelf(l.slice(0, 20)), skRows(4)), '#chart/week', 'music');
     if (!lib.settings.fullOnly) h += section('Хип-хоп чарт · превью', lazy(cached('dz-chart:116', () => deezer.chart(116, 40), 6 * 3600e3), (l) => (prepare(l, 3, 1), rowShelf(l.slice(0, 20))), skRows(4)), '', 'rap');
@@ -2053,7 +2077,7 @@ const views = {
       let h = `<div class="artist-head">${coverImg}<a class="back" href="#" data-back>${I.back}</a>
         <div class="who"><div class="avatar">${img(a.avatar, true)}</div><div><h1>${esc(a.name)}${a.verified ? I.check.replace('<svg', '<svg class="verified"') : ''}</h1>
         <p>${[a.followers ? fmtCount(a.followers) + ' подписчиков' : '', a.location].filter(Boolean).map(esc).join(' · ')}</p></div></div></div>`;
-      h += tracks.length ? playActions(k, `<button class="pill" id="followBtn">${following ? 'Вы подписаны' : 'Подписаться'}</button>`) : '';
+      h += tracks.length ? playActions(k, `<button class="glass-circle follow${following ? ' on' : ''}" id="followBtn" aria-label="Подписаться">${following ? I.added : I.add}</button>`) : '';
       h += tracks.length ? section('Популярные треки', rows(tracks.slice(0, 5), { key: k, showDur: true })) : '<div class="empty"><b>Треков пока нет</b></div>';
       h += lazy(cached('au-ualbums:' + id, () => audius.artistLists(id, 'albums')), (l) => l.length ? section('Альбомы', shelf(l.map(card).join(''))) : '', '');
       if (tracks.length > 5) h += section('Все треки', rows(tracks.slice(5), { key: reg(tracks.slice(5)), showDur: true }));
@@ -2061,7 +2085,7 @@ const views = {
       if (a.bio) h += section('Об артисте', `<p class="desc" style="margin-top:0;-webkit-line-clamp:8">${esc(a.bio)}</p>`);
       view.innerHTML = h;
       const fb = $('#followBtn');
-      if (fb) fb.onclick = () => { lib.toggleArtist(a); fb.textContent = lib.isFollowing(a.id) ? 'Вы подписаны' : 'Подписаться'; };
+      if (fb) fb.onclick = () => { lib.toggleArtist(a); const on = lib.isFollowing(a.id); fb.innerHTML = on ? I.added : I.add; fb.classList.toggle('on', on); toast(on ? 'Артист в медиатеке' : 'Убрано из медиатеки'); };
       markPlaying();
     }, () => { view.innerHTML = backBtn() + `<p class="err">Не удалось открыть артиста.<button class="text-btn" data-retry>Повторить</button></p>`; });
   },
@@ -2641,6 +2665,15 @@ function navDir(h, root) {
   if (navStack[navStack.length - 1] !== h) navStack.push(h);
   return 'enter-fwd';
 }
+/* "Создать": a new playlist, your own files or a radio station */
+function openCreate() {
+  openSheet('<h3>Создать</h3>', acts([
+    { label: 'Плейлист', icon: I.plus, fn: () => playlistForm() },
+    { label: 'Музыка с телефона', icon: I.folder, fn: () => go('#mine') },
+    { label: 'Радиостанция', icon: I.radio, fn: () => go('#radio') },
+  ]));
+}
+document.querySelector('.tab-create').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openCreate(); }, true);
 /* tapping the tab you are already on glides back to the top, as on iPhone */
 $('.tabs').addEventListener('click', (e) => {
   const a = e.target.closest('a[data-tab]');
@@ -2651,7 +2684,8 @@ function route() {
   const [name, ...rest] = h.split('/');
   const arg = rest.join('/');
   const fn = views[name] || views.home;
-  const tab = { dz: null, dza: null, browse: 'search', rappers: 'search', chart: 'search', genre: 'search', archive: 'search', underground: 'search', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', countries: 'radio', country: 'radio', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
+  if (name === 'create') { history.replaceState(null, '', '#home'); openCreate(); return route(); }
+  const tab = { dz: null, dza: null, browse: 'search', rappers: 'search', chart: 'search', genre: 'search', archive: 'search', underground: 'search', mine: 'library', 'mine-artist': 'library', 'mine-album': 'library', radio: 'search', countries: 'search', country: 'search', playlist: 'library', settings: 'library', artist: null, al: null, album: null, 'ia-artist': null }[name];
   const active = tab === undefined ? (views[name] ? name : 'home') : tab;
   if (active !== null) {
     const tabs = $$('.tabs a[data-tab]'), ti = $$('.tab-group a[data-tab]').findIndex((a) => a.dataset.tab === active);
